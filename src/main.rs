@@ -125,6 +125,14 @@ impl Machine {
         self.memory[addr as usize]
     }
 
+    fn read_immediate(self: &Machine) -> u8 {
+        self.read_mem(self.state.program_counter + 1)
+    }
+
+    fn read_zeropage_addr(self: &Machine) -> u16 {
+        self.read_mem(self.state.program_counter + 1) as u16
+    }
+
     fn write_mem(self: &mut Machine, addr: u16, value: u8) {
         // TODO: implement bank switching
         self.memory[addr as usize] = value;
@@ -142,6 +150,15 @@ impl Machine {
         let opcode = self.read_mem(self.state.program_counter);
 
          match opcode {
+            0x09 => {
+                let operand = self.read_immediate();
+                let value = self.state.accumulator | operand;
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                println!("ORA #${:02X}", operand);
+            }
             0x20 => {
                 let pc = self.state.program_counter;
                 self.push16(pc);
@@ -149,6 +166,20 @@ impl Machine {
                 self.state.program_counter = addr;
                 println!("JSR ${:04X}", addr);
             },
+            0x29 => {
+                let operand = self.read_immediate();
+                let value = self.state.accumulator & operand;
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                println!("AND #${:02X}", operand);
+            }
+            0x4C => {
+                let addr = self.read_absolute_addr();
+                self.state.program_counter = addr;
+                println!("JMP ${:04X}", addr);
+            }
             0x60 => {
                 self.state.program_counter = self.pop16() + 3;
                 println!("RTS");
@@ -164,6 +195,13 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 println!("STA ${:04X}", addr);
+            },
+            0x85 => {
+                let addr = self.read_zeropage_addr();
+                let value = self.state.accumulator;
+                self.write_mem(addr, value);
+                self.state.program_counter += 2;
+                println!("STA ${:02X}", addr);
             },
             0x8E => {
                 let addr = self.read_absolute_addr();
@@ -185,6 +223,14 @@ impl Machine {
                 self.state.program_counter += 2;
                 println!("LDX #${:02X}", value);
             },
+            0xA8 => {
+                let value = self.state.accumulator;
+                self.state.index_y = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                println!("TAY");
+            }
             0xA9 => {
                 let value = self.read_mem(self.state.program_counter + 1);
                 self.state.accumulator = value;
@@ -192,6 +238,15 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 println!("LDA #${:02X}", value);
+            },
+            0xAD => {
+                let addr = self.read_absolute_addr();
+                let value = self.read_mem(addr);
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 3;
+                println!("LDA ${:04X}", addr);
             },
             0xCA => {
                 let value = self.state.index_x.wrapping_sub(1);
@@ -235,6 +290,15 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
                 println!("CMP ${:04X},X", abs_addr);
+            },
+            0xF0 => {
+                let addr = self.read_relative_addr() + 2;
+                if self.state.status_register.zero_flag {
+                    self.state.program_counter = addr;
+                } else {
+                    self.state.program_counter += 2;
+                }
+                println!("BEQ ${:04X}", addr)
             },
             _ => {
                 println!("UNKNOWN OPCODE: 0x{:02X}", opcode);
