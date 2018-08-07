@@ -230,7 +230,9 @@ impl Machine {
                 let addr = abs_addr + self.state.index_x as u16;
                 let operand = self.read_mem(addr);
                 self.state.status_register.carry_flag = self.state.accumulator >= operand;
-                self.state.status_register.negative_flag = self.state.accumulator.wrapping_sub(operand) & (1 << 7) != 0;
+                let value = self.state.accumulator.wrapping_sub(operand);
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
                 self.state.program_counter += 3;
                 println!("CMP ${:04X},X", abs_addr);
             },
