@@ -130,6 +130,14 @@ impl Machine {
         self.memory[addr as usize] = value;
     }
 
+    fn set_negative_flag(self: &mut Machine, value: u8) {
+        self.state.status_register.negative_flag = value & (1 << 7) != 0;
+    }
+
+    fn set_zero_flag(self: &mut Machine, value: u8) {
+        self.state.status_register.zero_flag = value == 0;
+    }
+
     fn run_instruction(self: &mut Machine) {
         let opcode = self.read_mem(self.state.program_counter);
 
@@ -150,6 +158,13 @@ impl Machine {
                 self.state.program_counter += 1;
                 println!("SEI");
             },
+            0x8D => {
+                let addr = self.read_absolute_addr();
+                let value = self.read_mem(addr);
+                self.write_mem(addr, value);
+                self.state.program_counter += 3;
+                println!("STA ${:04X}", addr);
+            },
             0x8E => {
                 let addr = self.read_absolute_addr();
                 let value = self.state.index_x;
@@ -165,9 +180,27 @@ impl Machine {
             0xA2 => {
                 let value = self.read_mem(self.state.program_counter + 1);
                 self.state.index_x = value;
+                self.state.status_register.negative_flag = value & (1 << 7) != 0;
+                self.state.status_register.zero_flag = value == 0;
                 self.state.program_counter += 2;
                 println!("LDX #${:02X}", value);
             },
+            0xA9 => {
+                let value = self.read_mem(self.state.program_counter + 1);
+                self.state.accumulator = value;
+                self.state.status_register.negative_flag = value & (1 << 7) != 0;
+                self.state.status_register.zero_flag = value == 0;
+                self.state.program_counter += 2;
+                println!("LDA #${:02X}", value);
+            },
+            0xCA => {
+                let value = self.state.index_x.wrapping_sub(1);
+                self.state.index_x = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                println!("DEX");
+            }
             0xD0 => {
                 let addr = self.read_relative_addr() + 2;
                 if self.state.status_register.zero_flag == false {
