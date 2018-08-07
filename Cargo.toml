@@ -1,0 +1,6 @@
+[package]
+name = "c64emu"
+version = "0.1.0"
+authors = ["Jaakko Ketola <jaaket@kapsi.fi>"]
+
+[dependencies]
