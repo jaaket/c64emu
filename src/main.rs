@@ -180,16 +180,16 @@ impl Machine {
             0xA2 => {
                 let value = self.read_mem(self.state.program_counter + 1);
                 self.state.index_x = value;
-                self.state.status_register.negative_flag = value & (1 << 7) != 0;
-                self.state.status_register.zero_flag = value == 0;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 println!("LDX #${:02X}", value);
             },
             0xA9 => {
                 let value = self.read_mem(self.state.program_counter + 1);
                 self.state.accumulator = value;
-                self.state.status_register.negative_flag = value & (1 << 7) != 0;
-                self.state.status_register.zero_flag = value == 0;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 println!("LDA #${:02X}", value);
             },
@@ -213,10 +213,10 @@ impl Machine {
             0xBD => {
                 let abs_addr = self.read_absolute_addr();
                 let addr = abs_addr + self.state.index_x as u16;
-                let res = self.read_mem(addr);
-                self.state.accumulator = res;
-                self.state.status_register.negative_flag = res & (1 << 7) != 0;
-                self.state.status_register.zero_flag = res == 0;
+                let value = self.read_mem(addr);
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
                 self.state.program_counter += 3;
                 println!("LDA ${:04X},X", abs_addr);
             },
