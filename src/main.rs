@@ -152,7 +152,7 @@ impl Machine {
         self.state.status_register.zero_flag = value == 0;
     }
 
-    fn run_instruction(self: &mut Machine) {
+    fn run_instruction(self: &mut Machine) -> Result<(), String> {
         let opcode = self.read_mem(self.state.program_counter);
 
          match opcode {
@@ -307,9 +307,12 @@ impl Machine {
                 println!("BEQ ${:04X}", addr)
             },
             _ => {
-                println!("UNKNOWN OPCODE: 0x{:02X}", opcode);
+                let msg = format!("UNKNOWN OPCODE: 0x{:02X}", opcode);
+                return Err(msg);
             }
         }
+
+        return Ok(());
     }
 }
 
@@ -381,7 +384,9 @@ fn main() {
             DebuggerState::Step => {
                 println!();
                 machine.print_status();
-                machine.run_instruction();
+                if let Err(msg) = machine.run_instruction() {
+                    println!("{}", msg);
+                }
             }
             DebuggerState::Run => {
                 loop {
@@ -392,7 +397,10 @@ fn main() {
                         println!("Breakpoint at 0x{:04X} reached", machine.state.program_counter);
                         break;
                     }
-                    machine.run_instruction();
+                    if let Err(msg) = machine.run_instruction() {
+                        println!("{}", msg);
+                        break;
+                    }
                 }
             }
         }
