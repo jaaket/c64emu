@@ -1,5 +1,11 @@
+#[macro_use] extern crate lazy_static;
+extern crate regex;
+
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
+
+use regex::Regex;
 
 struct StatusRegister {
     negative_flag: bool,
@@ -307,8 +313,60 @@ impl Machine {
     }
 }
 
+enum DebuggerCommand {
+    Step,
+    AddBreakpoint { addr: u16 },
+    Run
+}
+
+fn parse_debugger_command(input: &str) -> Option<DebuggerCommand> {
+    lazy_static! {
+        static ref RUN: Regex = Regex::new("r").unwrap();
+        static ref ADD_BREAKPOINT: Regex = Regex::new(r"b ([0-9a-fA-F]{4})").unwrap();
+    }
+
+    if RUN.is_match(input) {
+        Some(DebuggerCommand::Run)
+    } else if input.is_empty() {
+        Some(DebuggerCommand::Step)
+    } else {
+        match ADD_BREAKPOINT.captures(input) {
+            Some(captures) => {
+                let addr_str = &captures[1];
+                match u16::from_str_radix(addr_str, 16) {
+                    Ok(addr) => Some(DebuggerCommand::AddBreakpoint { addr }),
+                    Err(_) => None
+                }
+            }
+            None => None
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DebuggerState {
+    Pause,
+    Step,
+    Run
+}
+
+struct Debugger {
+    state: DebuggerState,
+    breakpoints: HashSet<u16>
+}
+
+impl Debugger {
+    fn new() -> Debugger {
+        Debugger {
+            state: DebuggerState::Pause,
+            breakpoints: HashSet::new()
+        }
+    }
+}
+
 fn main() {
     let mut machine = Machine::new();
+    let mut debugger = Debugger::new();
 
     machine.load_file("basic.rom", 0xA000);
     machine.load_file("kernal.rom", 0xE000);
@@ -318,8 +376,51 @@ fn main() {
     let mut input = String::new();
 
     loop {
-        machine.print_status();
-        machine.run_instruction();
-        std::io::stdin().read_line(&mut input);
+         match debugger.state {
+            DebuggerState::Pause => {}
+            DebuggerState::Step => {
+                println!();
+                machine.print_status();
+                machine.run_instruction();
+            }
+            DebuggerState::Run => {
+                loop {
+                    println!();
+                    machine.print_status();
+                    if debugger.breakpoints.contains(&machine.state.program_counter) {
+                        debugger.state = DebuggerState::Pause;
+                        println!("Breakpoint at 0x{:04X} reached", machine.state.program_counter);
+                        break;
+                    }
+                    machine.run_instruction();
+                }
+            }
+        }
+
+        let cmd = loop {
+            print!("> ");
+            std::io::stdout().flush().unwrap();
+            input.clear();
+            std::io::stdin().read_line(&mut input).unwrap();
+
+            if let Some(cmd) = parse_debugger_command(input.as_str().trim()) {
+                break cmd;
+            } else {
+                println!("Unknown command: {}", input);
+            }
+        };
+
+        match cmd {
+            DebuggerCommand::Run => {
+                debugger.state = DebuggerState::Run;
+            }
+            DebuggerCommand::Step => {
+                debugger.state = DebuggerState::Step;
+            }
+            DebuggerCommand::AddBreakpoint { addr } => {
+                println!("Added breakpoint at 0x{:04X}", addr);
+                debugger.breakpoints.insert(addr);
+            }
+        }
     }
 }
