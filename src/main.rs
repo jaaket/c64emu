@@ -123,7 +123,10 @@ impl Machine {
     }
 
     fn read_relative_addr(self: &Machine) -> u16 {
-        (self.state.program_counter as i32 + self.memory[self.state.program_counter as usize + 1] as i32) as u16
+        let base = self.state.program_counter as i32;
+        // ... as i8 as i32 <- first interpret as signed 8-bit value, then sign-extend to 32 bits
+        let offset = self.memory[self.state.program_counter as usize + 1] as i8 as i32;
+        (base + offset) as u16
     }
 
     fn read_mem(self: &Machine, addr: u16) -> u8 {
