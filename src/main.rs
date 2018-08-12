@@ -182,6 +182,11 @@ impl Machine {
                 self.state.program_counter += 2;
                 println!("ORA #${:02X}", operand);
             }
+            0x18 => {
+                self.state.status_register.carry_flag = false;
+                self.state.program_counter += 1;
+                println!("CLC");
+            }
             0x20 => {
                 let pc = self.state.program_counter;
                 self.push16(pc);
@@ -258,6 +263,13 @@ impl Machine {
                 self.state.program_counter += 1;
                 println!("TXA");
             }
+            0x8C => {
+                let addr = self.read_absolute_addr();
+                let value = self.state.index_y;
+                self.write_mem(addr, value);
+                self.state.program_counter += 3;
+                println!("STY ${:04X}", addr);
+            }
             0x8E => {
                 let addr = self.read_absolute_addr();
                 let value = self.state.index_x;
@@ -271,6 +283,14 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 println!("STA (${:02X}),Y", vector_addr);
+            }
+            0x98 => {
+                let value = self.state.index_y;
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                println!("TYA");
             }
             0x99 => {
                 let abs_addr = self.read_absolute_addr();
@@ -309,6 +329,15 @@ impl Machine {
                 self.state.program_counter += 2;
                 println!("LDX #${:02X}", value);
             }
+            0xA4 => {
+                let addr = self.read_zeropage_addr();
+                let value = self.read_mem(addr);
+                self.state.index_y = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                println!("LDY ${:02X}", addr);
+            }
             0xA8 => {
                 let value = self.state.accumulator;
                 self.state.index_y = value;
@@ -334,6 +363,15 @@ impl Machine {
                 self.state.program_counter += 3;
                 println!("LDA ${:04X}", addr);
             }
+            0xB0 => {
+                let addr = self.read_relative_addr() + 2;
+                if self.state.status_register.carry_flag {
+                    self.state.program_counter = addr;
+                } else {
+                    self.state.program_counter += 2;
+                }
+                println!("BCS ${:04X}", addr);
+            }
             0xB1 => {
                 let (vector_addr, addr) = self.read_indirect_y_indexed_addr();
                 let value = self.read_mem(addr);
@@ -342,6 +380,16 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 println!("LDA (${:02X}),Y", vector_addr);
+            }
+            0xB9 => {
+                let abs_addr = self.read_absolute_addr();
+                let addr = abs_addr + self.state.index_y as u16;
+                let value = self.read_mem(addr);
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 3;
+                println!("LDA ${:04X},Y", abs_addr);
             }
             0xBD => {
                 let abs_addr = self.read_absolute_addr();
