@@ -154,7 +154,11 @@ impl Machine {
 
     fn write_mem(self: &mut Machine, addr: u16, value: u8) {
         // TODO: implement bank switching
-        self.memory[addr as usize] = value;
+        if (addr >= 0xA000 && addr < 0xC000) || addr >= 0xE000 {
+            println!("Tried to write 0x{:2X} to ROM at 0x{:4X}, ignoring", value, addr);
+        } else {
+            self.memory[addr as usize] = value;
+        }
     }
 
     fn set_negative_flag(self: &mut Machine, value: u8) {
