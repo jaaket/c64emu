@@ -148,7 +148,7 @@ impl Machine {
         let vector_addr = self.read_zeropage_addr();
         let vector_lo = self.read_mem(vector_addr);
         let vector_hi = self.read_mem(vector_addr + 1);
-        let vector = (vector_hi as u16) << 8 + vector_lo as u16;
+        let vector = ((vector_hi as u16) << 8) + vector_lo as u16;
         (vector_addr, vector + self.state.index_y as u16)
     }
 
