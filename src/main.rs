@@ -432,30 +432,35 @@ enum DebuggerCommand {
     Step,
     AddBreakpoint { addr: u16 },
     Run,
-    Exit
+    Exit,
+    Inspect { addr: u16 }
 }
 
 fn parse_debugger_command(input: &str) -> Option<DebuggerCommand> {
     lazy_static! {
         static ref RUN: Regex = Regex::new("r").unwrap();
-        static ref ADD_BREAKPOINT: Regex = Regex::new(r"b ([0-9a-fA-F]{4})").unwrap();
+        static ref ADD_BREAKPOINT: Regex = Regex::new(r"b ([0-9a-fA-F]{1,4})").unwrap();
+        static ref INSPECT: Regex = Regex::new(r"i ([0-9a-fA-F]{1,4})").unwrap();
     }
 
     if RUN.is_match(input) {
         Some(DebuggerCommand::Run)
     } else if input.is_empty() {
         Some(DebuggerCommand::Step)
-    } else {
-        match ADD_BREAKPOINT.captures(input) {
-            Some(captures) => {
-                let addr_str = &captures[1];
-                match u16::from_str_radix(addr_str, 16) {
-                    Ok(addr) => Some(DebuggerCommand::AddBreakpoint { addr }),
-                    Err(_) => None
-                }
-            }
-            None => None
+    } else if let Some(captures) = ADD_BREAKPOINT.captures(input) {
+        let addr_str = &captures[1];
+        match u16::from_str_radix(addr_str, 16) {
+            Ok(addr) => Some(DebuggerCommand::AddBreakpoint { addr }),
+            Err(_) => None
         }
+    } else if let Some(captures) = INSPECT.captures(input) {
+        let addr_str = &captures[1];
+        match u16::from_str_radix(addr_str, 16) {
+            Ok(addr) => Some(DebuggerCommand::Inspect { addr }),
+            Err(_) => None
+        }
+    } else {
+        None
     }
 }
 
@@ -497,7 +502,10 @@ fn main() {
 
     loop {
          match debugger.state {
-            DebuggerState::Pause => {}
+            DebuggerState::Pause => {
+                println!();
+                machine.print_status();
+            }
             DebuggerState::Step => {
                 println!();
                 machine.print_status();
@@ -556,6 +564,11 @@ fn main() {
             DebuggerCommand::AddBreakpoint { addr } => {
                 println!("Added breakpoint at 0x{:04X}", addr);
                 debugger.breakpoints.insert(addr);
+                debugger.state = DebuggerState::Pause;
+            }
+            DebuggerCommand::Inspect { addr } => {
+                println!("Memory at 0x{:04X}: 0x{:02X}", addr, machine.read_mem(addr));
+                debugger.state = DebuggerState::Pause;
             }
             DebuggerCommand::Exit => {
                 break;
