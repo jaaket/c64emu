@@ -350,8 +350,8 @@ impl Machine {
                 println!("LDA ${:04X},X", abs_addr);
             }
             0xC8 => {
-                let value = self.state.index_x.wrapping_add(1);
-                self.state.index_x = value;
+                let value = self.state.index_y.wrapping_add(1);
+                self.state.index_y = value;
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
