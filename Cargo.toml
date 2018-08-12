@@ -6,3 +6,4 @@ authors = ["Jaakko Ketola <jaaket@kapsi.fi>"]
 [dependencies]
 lazy_static = "1"
 regex = "1"
+rustyline = "1"

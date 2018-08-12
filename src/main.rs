@@ -1,11 +1,13 @@
 #[macro_use] extern crate lazy_static;
 extern crate regex;
+extern crate rustyline;
 
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
 
 use regex::Regex;
+use rustyline::error::ReadlineError;
 
 struct StatusRegister {
     negative_flag: bool,
@@ -429,7 +431,8 @@ impl Machine {
 enum DebuggerCommand {
     Step,
     AddBreakpoint { addr: u16 },
-    Run
+    Run,
+    Exit
 }
 
 fn parse_debugger_command(input: &str) -> Option<DebuggerCommand> {
@@ -486,7 +489,11 @@ fn main() {
 
     machine.reset();
 
-    let mut input = String::new();
+    let mut rl = rustyline::Editor::<()>::new();
+    let history_path = "history.txt";
+    if let Err(err) = rl.load_history(history_path) {
+        println!("History not loaded: {:?}", err);
+    }
 
     loop {
          match debugger.state {
@@ -516,16 +523,27 @@ fn main() {
         }
 
         let cmd = loop {
-            print!("> ");
-            std::io::stdout().flush().unwrap();
-            input.clear();
-            std::io::stdin().read_line(&mut input).unwrap();
-
-            if let Some(cmd) = parse_debugger_command(input.as_str().trim()) {
-                break cmd;
-            } else {
-                println!("Unknown command: {}", input);
+            match rl.readline("> ") {
+                Ok(input) => {
+                    rl.add_history_entry(&input);
+                    if let Some(cmd) = parse_debugger_command(input.trim()) {
+                        break cmd;
+                    } else {
+                        println!("Unknown command: {}", input);
+                    }
+                }
+                Err(ReadlineError::Interrupted) => {
+                    continue;
+                }
+                Err(ReadlineError::Eof) => {
+                    break DebuggerCommand::Exit;
+                }
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    break DebuggerCommand::Exit;
+                }
             }
+
         };
 
         match cmd {
@@ -539,6 +557,11 @@ fn main() {
                 println!("Added breakpoint at 0x{:04X}", addr);
                 debugger.breakpoints.insert(addr);
             }
+            DebuggerCommand::Exit => {
+                break;
+            }
         }
     }
+
+    rl.save_history(history_path).unwrap();
 }
