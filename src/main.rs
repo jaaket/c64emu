@@ -169,6 +169,13 @@ impl Machine {
         self.state.status_register.zero_flag = value == 0;
     }
 
+    fn compare(self: &mut Machine, operand1: u8, operand2: u8) {
+        self.state.status_register.carry_flag = operand1 >= operand2;
+        let value = operand1.wrapping_sub(operand2);
+        self.set_negative_flag(value);
+        self.set_zero_flag(value);
+    }
+
     fn run_instruction(self: &mut Machine) -> Result<(), String> {
         let opcode = self.read_mem(self.state.program_counter);
 
@@ -181,6 +188,15 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 println!("ORA #${:02X}", operand);
+            }
+            0x10 => {
+                let addr = self.read_relative_addr() + 2;
+                if self.state.status_register.negative_flag == false {
+                    self.state.program_counter = addr;
+                } else {
+                    self.state.program_counter += 2;
+                }
+                println!("BPL");
             }
             0x18 => {
                 self.state.status_register.carry_flag = false;
@@ -222,6 +238,19 @@ impl Machine {
                 self.state.program_counter = self.pop16() + 3;
                 println!("RTS");
             }
+            0x69 => {
+                let accumulator = self.state.accumulator;
+                let operand = self.read_immediate();
+                let added = accumulator as u16 + operand as u16 + if self.state.status_register.carry_flag { 1 } else { 0 };
+                let value = added as u8;
+                self.state.accumulator = value as u8;
+                self.state.status_register.carry_flag = added & 0x0100 > 0;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.status_register.overflow_flag = (accumulator as i8) >= 0 && (operand as i8) >= 0 && (value as i8) < 0;
+                self.state.program_counter += 2;
+                println!("ADC #${:02X}", operand);
+            }
             0x78 => {
                 self.state.status_register.interrupt_disable_flag = true;
                 self.state.program_counter += 1;
@@ -255,6 +284,14 @@ impl Machine {
                 self.state.program_counter += 2;
                 println!("STX ${:02X}", addr);
             }
+            0x88 => {
+                let value = self.state.index_y.wrapping_sub(1);
+                self.state.index_y = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                println!("DEY");
+            }
             0x8A => {
                 let value = self.state.index_x;
                 self.state.accumulator = value;
@@ -277,12 +314,37 @@ impl Machine {
                 self.state.program_counter += 3;
                 println!("STX ${:04X}", addr);
             }
+            0x90 => {
+                let addr = self.read_relative_addr() + 2;
+                if self.state.status_register.carry_flag == false {
+                    self.state.program_counter = addr;
+                } else {
+                    self.state.program_counter += 2;
+                }
+                println!("BCC ${:04X}", addr);
+            }
             0x91 => {
                 let (vector_addr, addr) = self.read_indirect_y_indexed_addr();
                 let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 println!("STA (${:02X}),Y", vector_addr);
+            }
+            0x94 => {
+                let base_addr = self.read_immediate() as u16;
+                let addr = base_addr + self.state.index_x as u16;
+                let value = self.state.index_y;
+                self.write_mem(addr, value);
+                self.state.program_counter += 2;
+                println!("STY ${:02X},X", base_addr);
+            }
+            0x95 => {
+                let base_addr = self.read_immediate() as u16;
+                let addr = base_addr + self.state.index_x as u16;
+                let value = self.state.accumulator;
+                self.write_mem(addr, value);
+                self.state.program_counter += 2;
+                println!("STA ${:02X},X", base_addr);
             }
             0x98 => {
                 let value = self.state.index_y;
@@ -304,6 +366,14 @@ impl Machine {
                 self.state.stack_pointer = self.state.index_x;
                 self.state.program_counter += 1;
                 println!("TXS");
+            }
+            0x9D => {
+                let abs_addr = self.read_absolute_addr();
+                let addr = abs_addr + self.state.index_x as u16;
+                let value = self.state.accumulator;
+                self.write_mem(addr, value);
+                self.state.program_counter += 3;
+                println!("STA ${:04X},X", addr);
             }
             0xAA => {
                 let value = self.state.accumulator;
@@ -428,11 +498,9 @@ impl Machine {
             }
             0xD1 => {
                 let (vector_addr, addr) = self.read_indirect_y_indexed_addr();
-                let operand = self.read_mem(addr);
-                self.state.status_register.carry_flag = self.state.accumulator >= operand;
-                let value = self.state.accumulator.wrapping_sub(operand);
-                self.set_negative_flag(value);
-                self.set_zero_flag(value);
+                let operand1 = self.state.accumulator;
+                let operand2 = self.read_mem(addr);
+                self.compare(operand1, operand2);
                 self.state.program_counter += 2;
                 println!("CMP (${:02X}),Y", vector_addr);
             }
@@ -444,13 +512,18 @@ impl Machine {
             0xDD => {
                 let abs_addr = self.read_absolute_addr();
                 let addr = abs_addr + self.state.index_x as u16;
-                let operand = self.read_mem(addr);
-                self.state.status_register.carry_flag = self.state.accumulator >= operand;
-                let value = self.state.accumulator.wrapping_sub(operand);
-                self.set_negative_flag(value);
-                self.set_zero_flag(value);
+                let operand1 = self.state.accumulator;
+                let operand2 = self.read_mem(addr);
+                self.compare(operand1, operand2);
                 self.state.program_counter += 3;
                 println!("CMP ${:04X},X", abs_addr);
+            }
+            0xE0 => {
+                let operand1 = self.state.index_x;
+                let operand2 = self.read_immediate();
+                self.compare(operand1, operand2);
+                self.state.program_counter += 2;
+                println!("CPX #${:02X}", operand2);
             }
             0xE6 => {
                 let addr = self.read_zeropage_addr();
@@ -460,6 +533,14 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 println!("INC ${:02X}", addr);
+            }
+            0xE8 => {
+                let value = self.state.index_x.wrapping_add(1);
+                self.state.index_x = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                println!("INX");
             }
             0xF0 => {
                 let addr = self.read_relative_addr() + 2;
