@@ -205,7 +205,7 @@ impl Machine {
             }
             0x20 => {
                 let pc = self.state.program_counter;
-                self.push16(pc);
+                self.push16(pc + 2);
                 let addr = self.read_absolute_addr();
                 self.state.program_counter = addr;
                 println!("JSR ${:04X}", addr);
@@ -235,7 +235,7 @@ impl Machine {
                 println!("JMP ${:04X}", addr);
             }
             0x60 => {
-                self.state.program_counter = self.pop16() + 3;
+                self.state.program_counter = self.pop16() + 1;
                 println!("RTS");
             }
             0x69 => {
