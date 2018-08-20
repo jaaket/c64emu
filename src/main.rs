@@ -152,6 +152,12 @@ impl Machine {
         (vector_addr, vector + self.state.index_y as u16)
     }
 
+    fn read_indexed_zeropage_x(self: &Machine) -> (u16, u16) {
+        let base_addr = self.read_immediate();
+        let addr = base_addr.wrapping_add(self.state.index_x);
+        (base_addr as u16, addr as u16)
+    }
+
     fn write_mem(self: &mut Machine, addr: u16, value: u8) {
         // TODO: implement bank switching
         if (addr >= 0xA000 && addr < 0xC000) || addr >= 0xE000 {
@@ -189,6 +195,15 @@ impl Machine {
                 self.state.program_counter += 2;
                 println!("ORA #${:02X}", operand);
             }
+            0x0D => {
+                let addr = self.read_absolute_addr();
+                let operand = self.read_mem(addr);
+                let value = self.state.accumulator | operand;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 3;
+                println!("ORA ${:04X}", addr);
+            }
             0x10 => {
                 let addr = self.read_relative_addr() + 2;
                 if self.state.status_register.negative_flag == false {
@@ -196,7 +211,7 @@ impl Machine {
                 } else {
                     self.state.program_counter += 2;
                 }
-                println!("BPL");
+                println!("BPL ${:04X}", addr);
             }
             0x18 => {
                 self.state.status_register.carry_flag = false;
@@ -331,16 +346,14 @@ impl Machine {
                 println!("STA (${:02X}),Y", vector_addr);
             }
             0x94 => {
-                let base_addr = self.read_immediate() as u16;
-                let addr = base_addr + self.state.index_x as u16;
+                let (base_addr, addr) = self.read_indexed_zeropage_x();
                 let value = self.state.index_y;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 println!("STY ${:02X},X", base_addr);
             }
             0x95 => {
-                let base_addr = self.read_immediate() as u16;
-                let addr = base_addr + self.state.index_x as u16;
+                let (base_addr, addr) = self.read_indexed_zeropage_x();
                 let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
@@ -374,6 +387,15 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 println!("STA ${:04X},X", addr);
+            }
+            0xA5 => {
+                let addr = self.read_zeropage_addr();
+                let value = self.read_mem(addr);
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                println!("LDA ${:02X}", addr);
             }
             0xAA => {
                 let value = self.state.accumulator;
@@ -450,6 +472,15 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 println!("LDA (${:02X}),Y", vector_addr);
+            }
+            0xB5 => {
+                let (base_addr, addr) = self.read_indexed_zeropage_x();
+                let value = self.read_mem(addr);
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                println!("LDA ${:02X},X", base_addr);
             }
             0xB9 => {
                 let abs_addr = self.read_absolute_addr();
