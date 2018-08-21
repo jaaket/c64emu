@@ -31,13 +31,17 @@ struct State {
 
 struct Machine {
     memory: [u8; 65536],
-    state: State
+    state: State,
+    wait_cycles: i8
 }
 
 const RESET_VECTOR_ADDR: usize = 0xfffc;
 
-impl Machine {
+fn same_page(a: u16, b: u16) -> bool {
+    a & 0xFF00 == b & 0xFF00
+}
 
+impl Machine {
     fn new() -> Machine {
         Machine {
             memory: [0; 65536],
@@ -57,7 +61,8 @@ impl Machine {
                 accumulator: 0,
                 index_x: 0,
                 index_y: 0
-            }
+            },
+            wait_cycles: 0
         }
     }
 
@@ -95,9 +100,9 @@ impl Machine {
     }
 
     fn print_status(self: &Machine) {
-        println!("pc      sp    n v - b d i z c  a     x     y");
+        println!("pc      sp    n v - b d i z c  a     x     y     w");
         println!(
-            "0x{:04X}  0x{:02X}  {} {} - {} {} {} {} {}  0x{:02X}  0x{:02X}  0x{:02X}",
+            "0x{:04X}  0x{:02X}  {} {} - {} {} {} {} {}  0x{:02X}  0x{:02X}  0x{:02X}  {}",
             self.state.program_counter,
             self.state.stack_pointer,
             if self.state.status_register.negative_flag { "1" } else { "0" },
@@ -109,7 +114,8 @@ impl Machine {
             if self.state.status_register.carry_flag { "1" } else { "0" },
             self.state.accumulator,
             self.state.index_x,
-            self.state.index_y
+            self.state.index_y,
+            self.wait_cycles
         );
         println!(
             "0x{:02X} 0x{:02X} 0x{:02X}",
@@ -193,6 +199,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 2;
                 println!("ORA #${:02X}", operand);
             }
             0x0D => {
@@ -202,20 +209,24 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
+                self.wait_cycles = 4;
                 println!("ORA ${:04X}", addr);
             }
             0x10 => {
                 let addr = self.read_relative_addr() + 2;
                 if self.state.status_register.negative_flag == false {
                     self.state.program_counter = addr;
+                    self.wait_cycles = if same_page(self.state.program_counter, addr) { 3 } else { 4 };
                 } else {
                     self.state.program_counter += 2;
+                    self.wait_cycles = 2;
                 }
                 println!("BPL ${:04X}", addr);
             }
             0x18 => {
                 self.state.status_register.carry_flag = false;
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("CLC");
             }
             0x20 => {
@@ -223,6 +234,7 @@ impl Machine {
                 self.push16(pc + 2);
                 let addr = self.read_absolute_addr();
                 self.state.program_counter = addr;
+                self.wait_cycles = 6;
                 println!("JSR ${:04X}", addr);
             }
             0x29 => {
@@ -232,6 +244,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 2;
                 println!("AND #${:02X}", operand);
             }
             0x2A => {
@@ -242,15 +255,18 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("ROL A");
             }
             0x4C => {
                 let addr = self.read_absolute_addr();
                 self.state.program_counter = addr;
+                self.wait_cycles = 3;
                 println!("JMP ${:04X}", addr);
             }
             0x60 => {
                 self.state.program_counter = self.pop16() + 1;
+                self.wait_cycles = 6;
                 println!("RTS");
             }
             0x69 => {
@@ -264,11 +280,13 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.status_register.overflow_flag = (accumulator as i8) >= 0 && (operand as i8) >= 0 && (value as i8) < 0;
                 self.state.program_counter += 2;
+                self.wait_cycles = 2;
                 println!("ADC #${:02X}", operand);
             }
             0x78 => {
                 self.state.status_register.interrupt_disable_flag = true;
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("SEI");
             }
             0x8D => {
@@ -276,6 +294,7 @@ impl Machine {
                 let value = self.read_mem(addr);
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
+                self.wait_cycles = 4;
                 println!("STA ${:04X}", addr);
             }
             0x85 => {
@@ -283,6 +302,7 @@ impl Machine {
                 let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 3;
                 println!("STA ${:02X}", addr);
             }
             0x84 => {
@@ -290,6 +310,7 @@ impl Machine {
                 let value = self.state.index_y;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 3;
                 println!("STY ${:02X}", addr);
             }
             0x86 => {
@@ -297,6 +318,7 @@ impl Machine {
                 let value = self.state.index_x;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 3;
                 println!("STX ${:02X}", addr);
             }
             0x88 => {
@@ -305,6 +327,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("DEY");
             }
             0x8A => {
@@ -313,6 +336,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("TXA");
             }
             0x8C => {
@@ -320,6 +344,7 @@ impl Machine {
                 let value = self.state.index_y;
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
+                self.wait_cycles = 4;
                 println!("STY ${:04X}", addr);
             }
             0x8E => {
@@ -327,14 +352,17 @@ impl Machine {
                 let value = self.state.index_x;
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
+                self.wait_cycles = 4;
                 println!("STX ${:04X}", addr);
             }
             0x90 => {
                 let addr = self.read_relative_addr() + 2;
                 if self.state.status_register.carry_flag == false {
                     self.state.program_counter = addr;
+                    self.wait_cycles = if same_page(self.state.program_counter, addr) { 3 } else { 4 };
                 } else {
                     self.state.program_counter += 2;
+                    self.wait_cycles = 2;
                 }
                 println!("BCC ${:04X}", addr);
             }
@@ -343,6 +371,7 @@ impl Machine {
                 let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 6;
                 println!("STA (${:02X}),Y", vector_addr);
             }
             0x94 => {
@@ -350,6 +379,7 @@ impl Machine {
                 let value = self.state.index_y;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 4;
                 println!("STY ${:02X},X", base_addr);
             }
             0x95 => {
@@ -357,6 +387,7 @@ impl Machine {
                 let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 4;
                 println!("STA ${:02X},X", base_addr);
             }
             0x98 => {
@@ -365,6 +396,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("TYA");
             }
             0x99 => {
@@ -373,11 +405,13 @@ impl Machine {
                 let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
+                self.wait_cycles = 5;
                 println!("STA ${:04X},Y", addr);
             }
             0x9A => {
                 self.state.stack_pointer = self.state.index_x;
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("TXS");
             }
             0x9D => {
@@ -386,6 +420,7 @@ impl Machine {
                 let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
+                self.wait_cycles = 5;
                 println!("STA ${:04X},X", addr);
             }
             0xA5 => {
@@ -395,6 +430,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 3;
                 println!("LDA ${:02X}", addr);
             }
             0xAA => {
@@ -403,6 +439,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("TAX");
             }
             0xA0 => {
@@ -411,6 +448,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 2;
                 println!("LDY #${:02X}", value);
             }
             0xA2 => {
@@ -419,6 +457,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 2;
                 println!("LDX #${:02X}", value);
             }
             0xA4 => {
@@ -428,6 +467,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 3;
                 println!("LDY ${:02X}", addr);
             }
             0xA8 => {
@@ -436,6 +476,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("TAY");
             }
             0xA9 => {
@@ -444,6 +485,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 2;
                 println!("LDA #${:02X}", value);
             }
             0xAD => {
@@ -453,14 +495,17 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
+                self.wait_cycles = 4;
                 println!("LDA ${:04X}", addr);
             }
             0xB0 => {
                 let addr = self.read_relative_addr() + 2;
                 if self.state.status_register.carry_flag {
                     self.state.program_counter = addr;
+                    self.wait_cycles = if same_page(self.state.program_counter, addr) { 3 } else { 4 };
                 } else {
                     self.state.program_counter += 2;
+                    self.wait_cycles = 2;
                 }
                 println!("BCS ${:04X}", addr);
             }
@@ -471,6 +516,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = if same_page(self.state.program_counter, addr) { 5 } else { 6 };
                 println!("LDA (${:02X}),Y", vector_addr);
             }
             0xB5 => {
@@ -480,6 +526,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 4;
                 println!("LDA ${:02X},X", base_addr);
             }
             0xB9 => {
@@ -490,6 +537,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
+                self.wait_cycles = if same_page(self.state.program_counter, addr) { 4 } else { 5 };
                 println!("LDA ${:04X},Y", abs_addr);
             }
             0xBD => {
@@ -500,6 +548,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
+                self.wait_cycles = if same_page(self.state.program_counter, addr) { 4 } else { 5 };
                 println!("LDA ${:04X},X", abs_addr);
             }
             0xC8 => {
@@ -508,6 +557,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("INY");
             }
             0xCA => {
@@ -516,14 +566,17 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("DEX");
             }
             0xD0 => {
                 let addr = self.read_relative_addr() + 2;
                 if self.state.status_register.zero_flag == false {
                     self.state.program_counter = addr;
+                    self.wait_cycles = if same_page(self.state.program_counter, addr) { 3 } else { 4 };
                 } else {
                     self.state.program_counter += 2;
+                    self.wait_cycles = 2;
                 }
                 println!("BNE ${:04X}", addr);
             }
@@ -533,11 +586,13 @@ impl Machine {
                 let operand2 = self.read_mem(addr);
                 self.compare(operand1, operand2);
                 self.state.program_counter += 2;
+                self.wait_cycles = if same_page(self.state.program_counter, addr) { 5 } else { 6 };
                 println!("CMP (${:02X}),Y", vector_addr);
             }
             0xD8 => {
                 self.state.status_register.decimal_mode_flag = false;
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("CLD");
             }
             0xDD => {
@@ -547,6 +602,7 @@ impl Machine {
                 let operand2 = self.read_mem(addr);
                 self.compare(operand1, operand2);
                 self.state.program_counter += 3;
+                self.wait_cycles = if same_page(self.state.program_counter, addr) { 4 } else { 5 };
                 println!("CMP ${:04X},X", abs_addr);
             }
             0xE0 => {
@@ -554,6 +610,7 @@ impl Machine {
                 let operand2 = self.read_immediate();
                 self.compare(operand1, operand2);
                 self.state.program_counter += 2;
+                self.wait_cycles = 2;
                 println!("CPX #${:02X}", operand2);
             }
             0xE6 => {
@@ -563,6 +620,7 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
+                self.wait_cycles = 5;
                 println!("INC ${:02X}", addr);
             }
             0xE8 => {
@@ -571,14 +629,17 @@ impl Machine {
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
+                self.wait_cycles = 2;
                 println!("INX");
             }
             0xF0 => {
                 let addr = self.read_relative_addr() + 2;
                 if self.state.status_register.zero_flag {
                     self.state.program_counter = addr;
+                    self.wait_cycles = if same_page(self.state.program_counter, addr) { 3 } else { 4 };
                 } else {
                     self.state.program_counter += 2;
+                    self.wait_cycles = 2;
                 }
                 println!("BEQ ${:04X}", addr)
             }
@@ -589,6 +650,15 @@ impl Machine {
         }
 
         return Ok(());
+    }
+
+    fn tick(self: &mut Machine) -> Result<(), String> {
+        self.wait_cycles -= 1;
+        if self.wait_cycles <= 0 {
+            self.run_instruction()
+        } else {
+            Ok (())
+        }
     }
 }
 
@@ -673,7 +743,7 @@ fn main() {
             DebuggerState::Step => {
                 println!();
                 machine.print_status();
-                if let Err(msg) = machine.run_instruction() {
+                if let Err(msg) = machine.tick() {
                     println!("{}", msg);
                 }
             }
@@ -686,7 +756,7 @@ fn main() {
                         println!("Breakpoint at 0x{:04X} reached", machine.state.program_counter);
                         break;
                     }
-                    if let Err(msg) = machine.run_instruction() {
+                    if let Err(msg) = machine.tick() {
                         println!("{}", msg);
                         break;
                     }
