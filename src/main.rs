@@ -718,21 +718,24 @@ enum DebuggerCommand {
     Step,
     AddBreakpoint { addr: u16 },
     AddWatchpoint { addr: u16 },
-    Run,
+    Run { verbose: bool },
     Exit,
     Inspect { addr: u16 }
 }
 
 fn parse_debugger_command(input: &str) -> Option<DebuggerCommand> {
     lazy_static! {
-        static ref RUN: Regex = Regex::new("r").unwrap();
+        static ref RUN: Regex = Regex::new("r$").unwrap();
+        static ref RUN_VERBOSE: Regex = Regex::new("r v").unwrap();
         static ref ADD_BREAKPOINT: Regex = Regex::new(r"b ([0-9a-fA-F]{1,4})").unwrap();
         static ref ADD_WATCHPOINT: Regex = Regex::new(r"w ([0-9a-fA-F]{1,4})").unwrap();
         static ref INSPECT: Regex = Regex::new(r"i ([0-9a-fA-F]{1,4})").unwrap();
     }
 
     if RUN.is_match(input) {
-        Some(DebuggerCommand::Run)
+        Some(DebuggerCommand::Run { verbose: false })
+    } else if RUN_VERBOSE.is_match(input) {
+        Some(DebuggerCommand::Run { verbose: true })
     } else if input.is_empty() {
         Some(DebuggerCommand::Step)
     } else if let Some(captures) = ADD_BREAKPOINT.captures(input) {
@@ -762,7 +765,7 @@ fn parse_debugger_command(input: &str) -> Option<DebuggerCommand> {
 enum DebuggerState {
     Pause,
     Step,
-    Run
+    Run { verbose: bool }
 }
 
 struct Debugger {
@@ -810,10 +813,12 @@ fn main() {
                     println!("{}", msg);
                 }
             }
-            DebuggerState::Run => {
+            DebuggerState::Run { verbose } => {
                 loop {
-                    println!();
-                    machine.print_status();
+                    if verbose {
+                        println!();
+                        machine.print_status();
+                    }
                     if debugger.breakpoints.contains(&machine.state.program_counter) {
                         debugger.state = DebuggerState::Pause;
                         println!("Breakpoint at 0x{:04X} reached", machine.state.program_counter);
@@ -863,8 +868,8 @@ fn main() {
         };
 
         match cmd {
-            DebuggerCommand::Run => {
-                debugger.state = DebuggerState::Run;
+            DebuggerCommand::Run { verbose } => {
+                debugger.state = DebuggerState::Run { verbose };
             }
             DebuggerCommand::Step => {
                 debugger.state = DebuggerState::Step;
