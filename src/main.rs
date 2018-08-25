@@ -111,11 +111,21 @@ impl Machine {
         &mut self.memory[0x100 as usize + self.state.stack_pointer as usize]
     }
 
+    fn push8(self: &mut Machine, value: u8) {
+        *self.stack() = value;
+        self.state.stack_pointer -= 1;
+    }
+
     fn push16(self: &mut Machine, value: u16) {
         *self.stack() = ((value & 0xFF00) >> 8) as u8;
         self.state.stack_pointer -= 1;
         *self.stack() = (value & 0x00FF) as u8;
         self.state.stack_pointer -= 1;
+    }
+
+    fn pop8(self: &mut Machine) -> u8 {
+        self.state.stack_pointer += 1;
+        *self.stack()
     }
 
     fn pop16(self: &mut Machine) -> u16 {
@@ -245,16 +255,99 @@ impl Machine {
         self.state.status_register.overflow_flag = (accumulator as i8) >= 0 && (operand as i8) >= 0 && (value as i8) < 0;
     }
 
+    fn subtract_with_carry(self: &mut Machine, operand: u8) {
+        let accumulator = self.state.accumulator;
+        let subtracted = accumulator as i8 as i16 - operand as i8 as i16 - if self.state.status_register.carry_flag { 0 } else { 1 };
+        let value = subtracted as u8;
+        self.state.accumulator = value;
+        self.state.status_register.carry_flag = subtracted < 0 || subtracted > 255;
+        self.set_negative_flag(value);
+        self.set_zero_flag(value);
+        self.state.status_register.overflow_flag = subtracted < -128 || subtracted > 127;
+    }
+
+    fn shift_left_memory(self: &mut Machine, addr: u16) -> Effect {
+        let operand = self.read_mem(addr);
+        let shifted = (operand as u16) << 1;
+        let value = shifted as u8;
+        self.write_mem(addr, value);
+        self.state.status_register.carry_flag = shifted & 0x0100 > 0;
+        self.set_negative_flag(value);
+        self.set_zero_flag(value);
+        Effect::WriteMem { addr, value }
+    }
+
+    fn rotate_right_memory(self: &mut Machine, addr: u16) -> Effect {
+        let operand = self.read_mem(addr);
+        let value = ((if self.state.status_register.carry_flag { 0x100 } else { 0 } | operand as u16) >> 1) as u8;
+        self.write_mem(addr, value);
+        self.state.status_register.carry_flag = operand & 1 > 0;
+        self.set_negative_flag(value);
+        self.set_zero_flag(value);
+        Effect::WriteMem { addr, value }
+    }
+
+    fn decrement_memory(self: &mut Machine, addr: u16) -> Effect {
+        let operand = self.read_mem(addr);
+        let value = operand.wrapping_sub(1);
+        self.write_mem(addr, value);
+        self.set_negative_flag(value);
+        self.set_zero_flag(value);
+        Effect::WriteMem { addr, value }
+    }
+
+    fn or_with_accumulator(self: &mut Machine, operand: u8) {
+        let value = self.state.accumulator | operand;
+        self.state.accumulator = value;
+        self.set_negative_flag(value);
+        self.set_zero_flag(value);
+    }
+
     fn run_instruction(self: &mut Machine) -> Result<(String, Option<Effect>), String> {
         let opcode = self.read_mem(self.state.program_counter);
 
          match opcode {
+            0x05 => {
+                let addr = self.read_zeropage_addr();
+                let operand = self.read_mem(addr);
+                self.or_with_accumulator(operand);
+                self.state.program_counter += 2;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("ORA ${:02X}", addr),
+                    None
+                ));
+            }
+            0x06 => {
+                let addr = self.read_zeropage_addr();
+                let effect = self.shift_left_memory(addr);
+                self.state.program_counter += 2;
+                self.wait_cycles = 5;
+                return Ok((
+                    format!("ASL ${:02X}", addr),
+                    Some(effect)
+                ))
+            }
+            0x08 => {
+                let value =
+                    if self.state.status_register.carry_flag             { 0b0000_0001 } else { 0 } |
+                    if self.state.status_register.zero_flag              { 0b0000_0010 } else { 0 } |
+                    if self.state.status_register.interrupt_disable_flag { 0b0000_0100 } else { 0 } |
+                    if self.state.status_register.decimal_mode_flag      { 0b0000_1000 } else { 0 } |
+                    if self.state.status_register.break_flag             { 0b0001_0000 } else { 0 } |
+                    if self.state.status_register.overflow_flag          { 0b0100_0000 } else { 0 } |
+                    if self.state.status_register.negative_flag          { 0b1000_0000 } else { 0 };
+                self.push8(value);
+                self.state.program_counter += 1;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("PHP"),
+                    None
+                ));
+            }
             0x09 => {
                 let operand = self.read_immediate();
-                let value = self.state.accumulator | operand;
-                self.state.accumulator = value;
-                self.set_negative_flag(value);
-                self.set_zero_flag(value);
+                self.or_with_accumulator(operand);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
                 return Ok((
@@ -265,10 +358,7 @@ impl Machine {
             0x0D => {
                 let addr = self.read_absolute_addr();
                 let operand = self.read_mem(addr);
-                let value = self.state.accumulator | operand;
-                self.state.accumulator = value;
-                self.set_negative_flag(value);
-                self.set_zero_flag(value);
+                self.or_with_accumulator(operand);
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
                 return Ok((
@@ -290,6 +380,16 @@ impl Machine {
                     None
                 ));
             }
+            0x16 => {
+                let (base_addr, addr) = self.read_indexed_zeropage_x();
+                let effect = self.shift_left_memory(addr);
+                self.state.program_counter += 2;
+                self.wait_cycles = 6;
+                return Ok((
+                    format!("ASL ${:02X},X", base_addr),
+                    Some(effect)
+                ));
+            }
             0x18 => {
                 self.state.status_register.carry_flag = false;
                 self.state.program_counter += 1;
@@ -307,6 +407,36 @@ impl Machine {
                 self.wait_cycles = 6;
                 return Ok((
                     format!("JSR ${:04X}", addr),
+                    None
+                ));
+            }
+            0x24 => {
+                let addr = self.read_zeropage_addr();
+                let operand = self.read_mem(addr);
+                let value = self.state.accumulator & operand;
+                self.set_zero_flag(value);
+                self.set_negative_flag(value);
+                self.state.status_register.overflow_flag = value & 0b0100_0000 > 0;
+                self.state.program_counter += 2;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("BIT ${:02X}", addr),
+                    None
+                ))
+            }
+            0x28 => {
+                let value = self.pop8();
+                self.state.status_register.carry_flag             = value & 0b0000_0001 > 0;
+                self.state.status_register.zero_flag              = value & 0b0000_0010 > 0;
+                self.state.status_register.interrupt_disable_flag = value & 0b0000_0100 > 0;
+                self.state.status_register.decimal_mode_flag      = value & 0b0000_1000 > 0;
+                self.state.status_register.break_flag             = value & 0b0001_0000 > 0;
+                self.state.status_register.overflow_flag          = value & 0b0100_0000 > 0;
+                self.state.status_register.negative_flag          = value & 0b1000_0000 > 0;
+                self.state.program_counter += 1;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("PLP"),
                     None
                 ));
             }
@@ -360,6 +490,58 @@ impl Machine {
                     None
                 ));
             }
+            0x45 => {
+                let addr = self.read_zeropage_addr();
+                let operand = self.read_mem(addr);
+                let value = self.state.accumulator ^ operand;
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("EOR ${:02X}", addr),
+                    None
+                ));
+            }
+            0x46 => {
+                let addr = self.read_zeropage_addr();
+                let operand = self.read_mem(addr);
+                let value = operand >> 1;
+                self.write_mem(addr, value);
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.status_register.carry_flag = operand & 1 > 0;
+                self.state.program_counter += 2;
+                self.wait_cycles = 5;
+                return Ok((
+                    format!("LSR ${:02X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
+            }
+            0x48 => {
+                let value = self.state.accumulator;
+                self.push8(value);
+                self.state.program_counter += 1;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("PHA"),
+                    None
+                ));
+            }
+            0x49 => {
+                let operand = self.read_immediate();
+                let value = self.state.accumulator ^ operand;
+                self.state.accumulator = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("EOR #${:02X}", operand),
+                    None
+                ));
+            }
             0x4C => {
                 let addr = self.read_absolute_addr();
                 self.state.program_counter = addr;
@@ -367,6 +549,21 @@ impl Machine {
                 return Ok((
                     format!("JMP ${:04X}", addr),
                     None
+                ));
+            }
+            0x56 => {
+                let (base_addr, addr) = self.read_indexed_zeropage_x();
+                let operand = self.read_mem(addr);
+                let value = operand >> 1;
+                self.write_mem(addr, value);
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.status_register.carry_flag = operand & 1 > 0;
+                self.state.program_counter += 2;
+                self.wait_cycles = 5;
+                return Ok((
+                    format!("LSR ${:02X},X", base_addr),
+                    Some(Effect::WriteMem { addr, value })
                 ));
             }
             0x58 => {
@@ -397,6 +594,25 @@ impl Machine {
                     None
                 ));
             }
+            0x66 => {
+                let addr = self.read_zeropage_addr();
+                let effect = self.rotate_right_memory(addr);
+                self.state.program_counter += 2;
+                self.wait_cycles = 5;
+                return Ok((
+                    format!("ROR ${:02X}", addr),
+                    Some(effect)
+                ));
+            }
+            0x68 => {
+                self.state.accumulator = self.pop8();
+                self.state.program_counter += 1;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("PLA"),
+                    None
+                ));
+            }
             0x69 => {
                 let operand = self.read_immediate();
                 self.add_with_carry(operand);
@@ -404,6 +620,20 @@ impl Machine {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("ADC #${:02X}", operand),
+                    None
+                ));
+            }
+            0x6A => {
+                let operand = self.state.accumulator;
+                let value = ((if self.state.status_register.carry_flag { 0x100 } else { 0 } | operand as u16) >> 1) as u8;
+                self.state.accumulator = value;
+                self.state.status_register.carry_flag = operand & 1 > 0;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("ROR A"),
                     None
                 ));
             }
@@ -419,12 +649,34 @@ impl Machine {
                     None
                 ));
             }
+            0x76 => {
+                let (base_addr, addr) = self.read_indexed_zeropage_x();
+                let effect = self.rotate_right_memory(addr);
+                self.state.program_counter += 2;
+                self.wait_cycles = 6;
+                return Ok((
+                    format!("ROR ${:02X},X", base_addr),
+                    Some(effect)
+                ));
+            }
             0x78 => {
                 self.state.status_register.interrupt_disable_flag = true;
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
                 return Ok((
                     format!("SEI"),
+                    None
+                ));
+            }
+            0x79 => {
+                let abs_addr = self.read_absolute_addr();
+                let addr = abs_addr + self.state.index_y as u16;
+                let operand = self.read_mem(addr);
+                self.add_with_carry(operand);
+                self.state.program_counter += 3;
+                self.wait_cycles = if same_page(self.state.program_counter, addr) { 4 } else { 5 };
+                return Ok((
+                    format!("ADC ${:04X},Y", abs_addr),
                     None
                 ));
             }
@@ -829,6 +1081,17 @@ impl Machine {
                     None
                 ));
             }
+            0xC0 => {
+                let operand1 = self.state.index_y;
+                let operand2 = self.read_immediate();
+                self.compare(operand1, operand2);
+                self.state.program_counter += 2;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("CPY #${:02X}", operand2),
+                    None
+                ));
+            }
             0xC4 => {
                 let operand1 = self.state.index_y;
                 let addr = self.read_zeropage_addr();
@@ -852,6 +1115,16 @@ impl Machine {
                     format!("CMP ${:02X}", addr),
                     None
                 ))
+            }
+            0xC6 => {
+                let addr = self.read_zeropage_addr();
+                let effect = self.decrement_memory(addr);
+                self.state.program_counter += 2;
+                self.wait_cycles = 6;
+                return Ok((
+                    format!("DEC ${:02X}", addr),
+                    Some(effect)
+                ));
             }
             0xC8 => {
                 let value = self.state.index_y.wrapping_add(1);
@@ -947,6 +1220,29 @@ impl Machine {
                     None
                 ));
             }
+            0xE4 => {
+                let addr = self.read_zeropage_addr();
+                let operand1 = self.state.index_x;
+                let operand2 = self.read_mem(addr);
+                self.compare(operand1, operand2);
+                self.state.program_counter += 2;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("CPX ${:02X}", addr),
+                    None
+                ));
+            }
+            0xE5 => {
+                let addr = self.read_zeropage_addr();
+                let operand = self.read_mem(addr);
+                self.subtract_with_carry(operand);
+                self.state.program_counter += 2;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("SBC ${:02X}", addr),
+                    None
+                ));
+            }
             0xE6 => {
                 let addr = self.read_zeropage_addr();
                 let value = self.read_mem(addr) + 1;
@@ -969,6 +1265,16 @@ impl Machine {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("INX"),
+                    None
+                ));
+            }
+            0xE9 => {
+                let operand = self.read_immediate();
+                self.subtract_with_carry(operand);
+                self.state.program_counter += 2;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("SBC #${:02X}", operand),
                     None
                 ));
             }
