@@ -243,6 +243,7 @@ impl Machine {
                 let addr = self.read_absolute_addr();
                 let operand = self.read_mem(addr);
                 let value = self.state.accumulator | operand;
+                self.state.accumulator = value;
                 self.set_negative_flag(value);
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
