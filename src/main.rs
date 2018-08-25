@@ -9,6 +9,9 @@ use std::io::prelude::*;
 use regex::Regex;
 use rustyline::error::ReadlineError;
 
+mod vic_ii;
+use vic_ii::VicII;
+
 struct StatusRegister {
     negative_flag: bool,
     overflow_flag: bool,
@@ -31,8 +34,12 @@ struct State {
 
 struct Machine {
     memory: [u8; 65536],
+    io: [u8; 65536],
+    char_rom: [u8; 4096],
+    vic_bank: [u8; 16384],
     state: State,
-    wait_cycles: i8
+    wait_cycles: i8,
+    vic: VicII
 }
 
 const RESET_VECTOR_ADDR: usize = 0xfffc;
@@ -41,10 +48,18 @@ fn same_page(a: u16, b: u16) -> bool {
     a & 0xFF00 == b & 0xFF00
 }
 
+enum MemoryRegion {
+    ROM,
+    CHAR_ROM
+}
+
 impl Machine {
     fn new() -> Machine {
         Machine {
             memory: [0; 65536],
+            io: [0; 65536],
+            char_rom: [0; 4096],
+            vic_bank: [0; 16384],
             state: State {
                 program_counter: 0,
                 stack_pointer: 0,
@@ -62,7 +77,8 @@ impl Machine {
                 index_x: 0,
                 index_y: 0
             },
-            wait_cycles: 0
+            wait_cycles: 0,
+            vic: VicII::new()
         }
     }
 
@@ -70,9 +86,14 @@ impl Machine {
         self.state.program_counter = self.memory[RESET_VECTOR_ADDR] as u16 | ((self.memory[RESET_VECTOR_ADDR + 1] as u16) << 8);
     }
 
-    fn load_file(self: &mut Machine, filename: &str, offset: usize) {
+    fn load_file(self: &mut Machine, filename: &str, memory_region: MemoryRegion, offset: usize) {
         let f = File::open(filename).expect(&format!("file not found: {}", filename));
-        f.bytes().zip(&mut self.memory[offset..]).for_each(|(byte, memory_byte)| *memory_byte = byte.unwrap());
+        let target =
+            match memory_region {
+                MemoryRegion::ROM => &mut self.memory[offset..],
+                MemoryRegion::CHAR_ROM => &mut self.char_rom[offset..]
+            };
+        f.bytes().zip(target).for_each(|(byte, memory_byte)| *memory_byte = byte.unwrap());
     }
 
     fn stack(self: &mut Machine) -> &mut u8 {
@@ -139,7 +160,13 @@ impl Machine {
 
     fn read_mem(self: &Machine, addr: u16) -> u8 {
         // TODO: implement bank switching
-        self.memory[addr as usize]
+        if addr >= 0xD000 && addr < 0xD400 {
+            self.vic.read(addr)
+        } else if addr >= 0xD400 && addr < 0xE000 {
+            self.io[addr as usize]
+        } else {
+            self.memory[addr as usize]
+        }
     }
 
     fn read_immediate(self: &Machine) -> u8 {
@@ -167,7 +194,18 @@ impl Machine {
     fn write_mem(self: &mut Machine, addr: u16, value: u8) {
         // TODO: implement bank switching
         if (addr >= 0xA000 && addr < 0xC000) || addr >= 0xE000 {
-            println!("Tried to write 0x{:2X} to ROM at 0x{:4X}, ignoring", value, addr);
+            println!("Tried to write 0x{:02X} to ROM at 0x{:04X}, ignoring", value, addr);
+        } else if addr >= 0xD000 && addr < 0xD400 {
+            self.vic.write(addr, value);
+        } else if addr >= 0xD400 && addr < 0xE000 {
+            self.io[addr as usize] = value;
+            if addr == 0xDD00 {
+                let bank_start: usize = 16384 * (0b11 - (value as u16 & 0b11)) as usize;
+                self.vic_bank.copy_from_slice(&self.memory[bank_start..bank_start+16384]);
+                if value & 1 > 0 {
+                    self.vic_bank[0x1000..0x2000].copy_from_slice(&self.char_rom);
+                }
+            }
         } else {
             self.memory[addr as usize] = value;
         }
@@ -291,7 +329,7 @@ impl Machine {
             }
             0x8D => {
                 let addr = self.read_absolute_addr();
-                let value = self.read_mem(addr);
+                let value = self.state.accumulator;
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
@@ -623,7 +661,7 @@ impl Machine {
                 self.wait_cycles = 5;
                 println!("INC ${:02X}", addr);
             }
-            0xE8 => {
+             0xE8 => {
                 let value = self.state.index_x.wrapping_add(1);
                 self.state.index_x = value;
                 self.set_negative_flag(value);
@@ -653,6 +691,8 @@ impl Machine {
     }
 
     fn tick(self: &mut Machine) -> Result<(), String> {
+        self.vic.tick(&self.vic_bank);
+
         self.wait_cycles -= 1;
         if self.wait_cycles <= 0 {
             self.run_instruction()
@@ -723,8 +763,9 @@ fn main() {
     let mut machine = Machine::new();
     let mut debugger = Debugger::new();
 
-    machine.load_file("basic.rom", 0xA000);
-    machine.load_file("kernal.rom", 0xE000);
+    machine.load_file("basic.rom", MemoryRegion::ROM, 0xA000);
+    machine.load_file("kernal.rom", MemoryRegion::ROM, 0xE000);
+    machine.load_file("char.rom", MemoryRegion::CHAR_ROM, 0);
 
     machine.reset();
 

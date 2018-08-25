@@ -7,3 +7,7 @@ authors = ["Jaakko Ketola <jaaket@kapsi.fi>"]
 lazy_static = "1"
 regex = "1"
 rustyline = "1"
+sdl2 = "0.31"
+
+[dependencies.gl]
+git = "https://github.com/bjz/gl-rs"
