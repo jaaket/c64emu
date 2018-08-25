@@ -82,8 +82,6 @@ impl VicII {
             let char_x = (self.x_coord - self.first_x_coord()) / 8;
             let char_addr = base_addr + char_y as usize * 40 + char_x as usize;
             let char_ptr = ram[char_addr];
-            println!("{:04x}", char_addr);
-            println!("{:02x}", char_ptr);
             let data = ram[0x1000 + char_ptr as usize * 8 + self.raster_line as usize - self.first_line() as usize];
 
             for i in 0..8 {

@@ -53,6 +53,10 @@ enum MemoryRegion {
     CHAR_ROM
 }
 
+enum Effect {
+    WriteMem { addr: u16, value: u8 }
+}
+
 impl Machine {
     fn new() -> Machine {
         Machine {
@@ -98,11 +102,6 @@ impl Machine {
 
     fn stack(self: &mut Machine) -> &mut u8 {
         &mut self.memory[0x100 as usize + self.state.stack_pointer as usize]
-    }
-
-    fn push8(self: &mut Machine, value: u8) {
-        *self.stack() = value;
-        self.state.stack_pointer -= 1;
     }
 
     fn push16(self: &mut Machine, value: u16) {
@@ -226,7 +225,7 @@ impl Machine {
         self.set_zero_flag(value);
     }
 
-    fn run_instruction(self: &mut Machine) -> Result<(), String> {
+    fn run_instruction(self: &mut Machine) -> Result<Option<Effect>, String> {
         let opcode = self.read_mem(self.state.program_counter);
 
          match opcode {
@@ -334,6 +333,7 @@ impl Machine {
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
                 println!("STA ${:04X}", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x85 => {
                 let addr = self.read_zeropage_addr();
@@ -342,6 +342,7 @@ impl Machine {
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
                 println!("STA ${:02X}", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x84 => {
                 let addr = self.read_zeropage_addr();
@@ -350,6 +351,7 @@ impl Machine {
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
                 println!("STY ${:02X}", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x86 => {
                 let addr = self.read_zeropage_addr();
@@ -358,6 +360,7 @@ impl Machine {
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
                 println!("STX ${:02X}", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x88 => {
                 let value = self.state.index_y.wrapping_sub(1);
@@ -384,6 +387,7 @@ impl Machine {
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
                 println!("STY ${:04X}", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x8E => {
                 let addr = self.read_absolute_addr();
@@ -392,6 +396,7 @@ impl Machine {
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
                 println!("STX ${:04X}", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x90 => {
                 let addr = self.read_relative_addr() + 2;
@@ -411,6 +416,7 @@ impl Machine {
                 self.state.program_counter += 2;
                 self.wait_cycles = 6;
                 println!("STA (${:02X}),Y", vector_addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x94 => {
                 let (base_addr, addr) = self.read_indexed_zeropage_x();
@@ -419,6 +425,7 @@ impl Machine {
                 self.state.program_counter += 2;
                 self.wait_cycles = 4;
                 println!("STY ${:02X},X", base_addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x95 => {
                 let (base_addr, addr) = self.read_indexed_zeropage_x();
@@ -427,6 +434,7 @@ impl Machine {
                 self.state.program_counter += 2;
                 self.wait_cycles = 4;
                 println!("STA ${:02X},X", base_addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x98 => {
                 let value = self.state.index_y;
@@ -445,6 +453,7 @@ impl Machine {
                 self.state.program_counter += 3;
                 self.wait_cycles = 5;
                 println!("STA ${:04X},Y", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0x9A => {
                 self.state.stack_pointer = self.state.index_x;
@@ -460,6 +469,7 @@ impl Machine {
                 self.state.program_counter += 3;
                 self.wait_cycles = 5;
                 println!("STA ${:04X},X", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
             0xA5 => {
                 let addr = self.read_zeropage_addr();
@@ -660,6 +670,7 @@ impl Machine {
                 self.state.program_counter += 2;
                 self.wait_cycles = 5;
                 println!("INC ${:02X}", addr);
+                return Ok(Some(Effect::WriteMem { addr, value }));
             }
              0xE8 => {
                 let value = self.state.index_x.wrapping_add(1);
@@ -687,17 +698,17 @@ impl Machine {
             }
         }
 
-        return Ok(());
+        return Ok(None);
     }
 
-    fn tick(self: &mut Machine) -> Result<(), String> {
+    fn tick(self: &mut Machine) -> Result<Option<Effect>, String> {
         self.vic.tick(&self.vic_bank);
 
         self.wait_cycles -= 1;
         if self.wait_cycles <= 0 {
             self.run_instruction()
         } else {
-            Ok (())
+            Ok(None)
         }
     }
 }
@@ -705,6 +716,7 @@ impl Machine {
 enum DebuggerCommand {
     Step,
     AddBreakpoint { addr: u16 },
+    AddWatchpoint { addr: u16 },
     Run,
     Exit,
     Inspect { addr: u16 }
@@ -714,6 +726,7 @@ fn parse_debugger_command(input: &str) -> Option<DebuggerCommand> {
     lazy_static! {
         static ref RUN: Regex = Regex::new("r").unwrap();
         static ref ADD_BREAKPOINT: Regex = Regex::new(r"b ([0-9a-fA-F]{1,4})").unwrap();
+        static ref ADD_WATCHPOINT: Regex = Regex::new(r"w ([0-9a-fA-F]{1,4})").unwrap();
         static ref INSPECT: Regex = Regex::new(r"i ([0-9a-fA-F]{1,4})").unwrap();
     }
 
@@ -725,6 +738,12 @@ fn parse_debugger_command(input: &str) -> Option<DebuggerCommand> {
         let addr_str = &captures[1];
         match u16::from_str_radix(addr_str, 16) {
             Ok(addr) => Some(DebuggerCommand::AddBreakpoint { addr }),
+            Err(_) => None
+        }
+    } else if let Some(captures) = ADD_WATCHPOINT.captures(input) {
+        let addr_str = &captures[1];
+        match u16::from_str_radix(addr_str, 16) {
+            Ok(addr) => Some(DebuggerCommand::AddWatchpoint { addr }),
             Err(_) => None
         }
     } else if let Some(captures) = INSPECT.captures(input) {
@@ -747,14 +766,16 @@ enum DebuggerState {
 
 struct Debugger {
     state: DebuggerState,
-    breakpoints: HashSet<u16>
+    breakpoints: HashSet<u16>,
+    watchpoints: HashSet<u16>
 }
 
 impl Debugger {
     fn new() -> Debugger {
         Debugger {
             state: DebuggerState::Pause,
-            breakpoints: HashSet::new()
+            breakpoints: HashSet::new(),
+            watchpoints: HashSet::new()
         }
     }
 }
@@ -797,9 +818,20 @@ fn main() {
                         println!("Breakpoint at 0x{:04X} reached", machine.state.program_counter);
                         break;
                     }
-                    if let Err(msg) = machine.tick() {
-                        println!("{}", msg);
-                        break;
+
+                    match machine.tick() {
+                        Ok(Some(Effect::WriteMem { addr, value })) => {
+                            if debugger.watchpoints.contains(&addr) {
+                                debugger.state = DebuggerState::Pause;
+                                println!("Write detected at watchpoint: 0x{:02X} -> 0x{:04X}", value, addr);
+                                break;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(msg) => {
+                            println!("{}", msg);
+                            break;
+                        }
                     }
                 }
             }
@@ -839,6 +871,11 @@ fn main() {
             DebuggerCommand::AddBreakpoint { addr } => {
                 println!("Added breakpoint at 0x{:04X}", addr);
                 debugger.breakpoints.insert(addr);
+                debugger.state = DebuggerState::Pause;
+            }
+            DebuggerCommand::AddWatchpoint { addr } => {
+                println!("Added watchpoint at 0x{:04X}", addr);
+                debugger.watchpoints.insert(addr);
                 debugger.state = DebuggerState::Pause;
             }
             DebuggerCommand::Inspect { addr } => {
