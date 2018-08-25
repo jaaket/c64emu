@@ -4,6 +4,8 @@ extern crate gl;
 pub struct VicII {
     canvas: sdl2::render::Canvas<sdl2::video::Window>,
     event_pump: sdl2::EventPump,
+    pub char_rom: [u8; 4096],
+    char_rom_enabled: bool,
     raster_line: u16,
     x_coord: u16
 }
@@ -41,7 +43,9 @@ impl VicII {
             canvas: canvas,
             event_pump: event_pump,
             raster_line: 0,
-            x_coord: 0
+            x_coord: 0,
+            char_rom: [0; 4096],
+            char_rom_enabled: false
         }
     }
 
@@ -49,8 +53,20 @@ impl VicII {
         // panic!("Unhandled write to VIC-II register: 0x{:02X} -> 0x{:04X}", value, addr);
     }
 
-    pub fn read(self: &VicII, addr: u16) -> u8 {
-        0
+    pub fn read(self: &VicII, addr: u16, ram: &[u8]) -> u8 {
+        if self.char_rom_enabled && addr >= 0x1000 && addr < 0x2000 {
+            self.char_rom[addr as usize - 0x1000]
+        } else {
+            ram[addr as usize]
+        }
+    }
+
+    pub fn enable_char_rom(self: &mut VicII) {
+        self.char_rom_enabled = true;
+    }
+
+    pub fn disable_char_rom(self: &mut VicII) {
+        self.char_rom_enabled = false;
     }
 
     fn first_line(self: &VicII) -> u16 {
@@ -77,17 +93,24 @@ impl VicII {
         if self.raster_line >= self.first_line() && self.raster_line <= self.last_line() &&
             self.x_coord >= self.first_x_coord() && self.x_coord <= self.last_x_coord() {
 
-            let base_addr: usize = 0x0400;
+            let base_addr = 0x0400;
             let char_y = (self.raster_line - self.first_line()) / 8;
             let char_x = (self.x_coord - self.first_x_coord()) / 8;
-            let char_addr = base_addr + char_y as usize * 40 + char_x as usize;
-            let char_ptr = ram[char_addr];
-            let data = ram[0x1000 + char_ptr as usize * 8 + self.raster_line as usize - self.first_line() as usize];
+            let char_addr = base_addr + char_y * 40 + char_x;
+            let char_ptr = self.read(char_addr, ram) as u16;
+            let data = self.read(0x1000 + char_ptr * 8 + (self.raster_line - self.first_line()) % 8, ram);
+
+            if self.raster_line == self.first_line() && self.x_coord == self.first_x_coord() {
+                println!("{:04X}: {:02X}", char_addr, char_ptr);
+            }
 
             for i in 0..8 {
                 if data & (0x80 >> i) > 0 {
-                    self.canvas.draw_point((self.x_coord as i32 + i, self.raster_line as i32)).unwrap();
+                    self.canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
+                } else {
+                    self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
                 }
+                self.canvas.draw_point((self.x_coord as i32 + i, self.raster_line as i32)).unwrap();
             }
         }
 

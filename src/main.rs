@@ -36,7 +36,7 @@ struct Machine {
     memory: [u8; 65536],
     io: [u8; 65536],
     char_rom: [u8; 4096],
-    vic_bank: [u8; 16384],
+    vic_bank_start: u16,
     state: State,
     wait_cycles: i8,
     vic: VicII
@@ -48,6 +48,7 @@ fn same_page(a: u16, b: u16) -> bool {
     a & 0xFF00 == b & 0xFF00
 }
 
+#[derive(PartialEq)]
 enum MemoryRegion {
     ROM,
     CHAR_ROM
@@ -63,7 +64,7 @@ impl Machine {
             memory: [0; 65536],
             io: [0; 65536],
             char_rom: [0; 4096],
-            vic_bank: [0; 16384],
+            vic_bank_start: 0xC000,
             state: State {
                 program_counter: 0,
                 stack_pointer: 0,
@@ -91,13 +92,19 @@ impl Machine {
     }
 
     fn load_file(self: &mut Machine, filename: &str, memory_region: MemoryRegion, offset: usize) {
-        let f = File::open(filename).expect(&format!("file not found: {}", filename));
-        let target =
-            match memory_region {
-                MemoryRegion::ROM => &mut self.memory[offset..],
-                MemoryRegion::CHAR_ROM => &mut self.char_rom[offset..]
-            };
-        f.bytes().zip(target).for_each(|(byte, memory_byte)| *memory_byte = byte.unwrap());
+        {
+            let f = File::open(filename).expect(&format!("file not found: {}", filename));
+            let target =
+                match memory_region {
+                    MemoryRegion::ROM => &mut self.memory[offset..],
+                    MemoryRegion::CHAR_ROM => &mut self.char_rom[offset..]
+                };
+            f.bytes().zip(target).for_each(|(byte, memory_byte)| *memory_byte = byte.unwrap());
+        }
+
+        if memory_region == MemoryRegion::CHAR_ROM {
+            self.vic.char_rom.copy_from_slice(&self.char_rom[..]);
+        }
     }
 
     fn stack(self: &mut Machine) -> &mut u8 {
@@ -160,7 +167,8 @@ impl Machine {
     fn read_mem(self: &Machine, addr: u16) -> u8 {
         // TODO: implement bank switching
         if addr >= 0xD000 && addr < 0xD400 {
-            self.vic.read(addr)
+            let vic_bank_start = self.vic_bank_start;
+            self.vic.read(addr, &self.memory[vic_bank_start as usize..])
         } else if addr >= 0xD400 && addr < 0xE000 {
             self.io[addr as usize]
         } else {
@@ -199,10 +207,11 @@ impl Machine {
         } else if addr >= 0xD400 && addr < 0xE000 {
             self.io[addr as usize] = value;
             if addr == 0xDD00 {
-                let bank_start: usize = 16384 * (0b11 - (value as u16 & 0b11)) as usize;
-                self.vic_bank.copy_from_slice(&self.memory[bank_start..bank_start+16384]);
+                self.vic_bank_start = 16384 * (0b11 - (value as u16 & 0b11));
                 if value & 1 > 0 {
-                    self.vic_bank[0x1000..0x2000].copy_from_slice(&self.char_rom);
+                    self.vic.enable_char_rom();
+                } else {
+                    self.vic.disable_char_rom();
                 }
             }
         } else {
@@ -985,7 +994,8 @@ impl Machine {
     }
 
     fn tick(self: &mut Machine) -> Result<(Option<String>, Option<Effect>), String> {
-        self.vic.tick(&self.vic_bank);
+        let vic_bank_start = self.vic_bank_start;
+        self.vic.tick(&self.memory[vic_bank_start as usize..]);
 
         self.wait_cycles -= 1;
         if self.wait_cycles <= 0 {
