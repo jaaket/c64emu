@@ -225,6 +225,17 @@ impl Machine {
         self.set_zero_flag(value);
     }
 
+    fn add_with_carry(self: &mut Machine, operand: u8) {
+        let accumulator = self.state.accumulator;
+        let added = accumulator as u16 + operand as u16 + if self.state.status_register.carry_flag { 1 } else { 0 };
+        let value = added as u8;
+        self.state.accumulator = value as u8;
+        self.state.status_register.carry_flag = added & 0x0100 > 0;
+        self.set_negative_flag(value);
+        self.set_zero_flag(value);
+        self.state.status_register.overflow_flag = (accumulator as i8) >= 0 && (operand as i8) >= 0 && (value as i8) < 0;
+    }
+
     fn run_instruction(self: &mut Machine) -> Result<(String, Option<Effect>), String> {
         let opcode = self.read_mem(self.state.program_counter);
 
@@ -317,6 +328,29 @@ impl Machine {
                     None
                 ));
             }
+            0x30 => {
+                let addr = self.read_relative_addr() + 2;
+                if self.state.status_register.negative_flag {
+                    self.state.program_counter = addr;
+                    self.wait_cycles = if same_page(self.state.program_counter, addr) { 3 } else { 4 };
+                } else {
+                    self.state.program_counter += 2;
+                    self.wait_cycles = 2;
+                }
+                return Ok((
+                    format!("BMI ${:04X}", addr),
+                    None
+                ));
+            }
+            0x38 => {
+                self.state.status_register.carry_flag = true;
+                self.state.program_counter += 1;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("SEC"),
+                    None
+                ));
+            }
             0x4C => {
                 let addr = self.read_absolute_addr();
                 self.state.program_counter = addr;
@@ -326,6 +360,15 @@ impl Machine {
                     None
                 ));
             }
+            0x58 => {
+                self.state.status_register.interrupt_disable_flag = false;
+                self.state.program_counter += 1;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("CLI"),
+                    None
+                ))
+            }
             0x60 => {
                 self.state.program_counter = self.pop16() + 1;
                 self.wait_cycles = 6;
@@ -334,20 +377,36 @@ impl Machine {
                     None
                 ));
             }
+            0x65 => {
+                let addr = self.read_zeropage_addr();
+                let operand = self.read_mem(addr);
+                self.add_with_carry(operand);
+                self.state.program_counter += 2;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("ADC ${:02X}", addr),
+                    None
+                ));
+            }
             0x69 => {
-                let accumulator = self.state.accumulator;
                 let operand = self.read_immediate();
-                let added = accumulator as u16 + operand as u16 + if self.state.status_register.carry_flag { 1 } else { 0 };
-                let value = added as u8;
-                self.state.accumulator = value as u8;
-                self.state.status_register.carry_flag = added & 0x0100 > 0;
-                self.set_negative_flag(value);
-                self.set_zero_flag(value);
-                self.state.status_register.overflow_flag = (accumulator as i8) >= 0 && (operand as i8) >= 0 && (value as i8) < 0;
+                self.add_with_carry(operand);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
                 return Ok((
                     format!("ADC #${:02X}", operand),
+                    None
+                ));
+            }
+            0x6C => {
+                let vector_addr = self.read_absolute_addr();
+                let vector_lo = self.read_mem(vector_addr);
+                let vector_hi = self.read_mem(vector_addr + 1);
+                let addr = ((vector_hi as u16) << 8) + vector_lo as u16;
+                self.state.program_counter = addr;
+                self.wait_cycles = 5;
+                return Ok((
+                    format!("JMP ({:04X})", vector_addr),
                     None
                 ));
             }
@@ -641,6 +700,19 @@ impl Machine {
                     None
                 ));
             }
+            0xAC => {
+                let addr = self.read_absolute_addr();
+                let value = self.read_mem(addr);
+                self.state.index_y = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 3;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("LDY ${:04X}", addr),
+                    None
+                ));
+            }
             0xAD => {
                 let addr = self.read_absolute_addr();
                 let value = self.read_mem(addr);
@@ -651,6 +723,19 @@ impl Machine {
                 self.wait_cycles = 4;
                 return Ok((
                     format!("LDA ${:04X}", addr),
+                    None
+                ));
+            }
+            0xAE => {
+                let addr = self.read_absolute_addr();
+                let value = self.read_mem(addr);
+                self.state.index_x = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 3;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("LDX ${:04X}", addr),
                     None
                 ));
             }
@@ -680,6 +765,19 @@ impl Machine {
                     format!("LDA (${:02X}),Y", vector_addr),
                     None
                 ));
+            }
+            0xB4 => {
+                let (base_addr, addr) = self.read_indexed_zeropage_x();
+                let value = self.read_mem(addr);
+                self.state.index_y = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("LDY ${:02X},X", base_addr),
+                    None
+                ))
             }
             0xB5 => {
                 let (base_addr, addr) = self.read_indexed_zeropage_x();
@@ -722,6 +820,30 @@ impl Machine {
                     None
                 ));
             }
+            0xC4 => {
+                let operand1 = self.state.index_y;
+                let addr = self.read_zeropage_addr();
+                let operand2 = self.read_mem(addr);
+                self.compare(operand1, operand2);
+                self.state.program_counter += 2;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("CPY ${:02X}", addr),
+                    None
+                ));
+            }
+            0xC5 => {
+                let operand1 = self.state.accumulator;
+                let addr = self.read_zeropage_addr();
+                let operand2 = self.read_mem(addr);
+                self.compare(operand1, operand2);
+                self.state.program_counter += 2;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("CMP ${:02X}", addr),
+                    None
+                ))
+            }
             0xC8 => {
                 let value = self.state.index_y.wrapping_add(1);
                 self.state.index_y = value;
@@ -731,6 +853,17 @@ impl Machine {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("INY"),
+                    None
+                ));
+            }
+            0xC9 => {
+                let operand1 = self.state.accumulator;
+                let operand2 = self.read_immediate();
+                self.compare(operand1, operand2);
+                self.state.program_counter += 2;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("CMP #${:02X}", operand2),
                     None
                 ));
             }
