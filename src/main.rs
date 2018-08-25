@@ -225,7 +225,7 @@ impl Machine {
         self.set_zero_flag(value);
     }
 
-    fn run_instruction(self: &mut Machine) -> Result<Option<Effect>, String> {
+    fn run_instruction(self: &mut Machine) -> Result<(String, Option<Effect>), String> {
         let opcode = self.read_mem(self.state.program_counter);
 
          match opcode {
@@ -237,7 +237,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
-                println!("ORA #${:02X}", operand);
+                return Ok((
+                    format!("ORA #${:02X}", operand),
+                    None
+                ));
             }
             0x0D => {
                 let addr = self.read_absolute_addr();
@@ -248,7 +251,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
-                println!("ORA ${:04X}", addr);
+                return Ok((
+                    format!("ORA ${:04X}", addr),
+                    None
+                ));
             }
             0x10 => {
                 let addr = self.read_relative_addr() + 2;
@@ -259,13 +265,19 @@ impl Machine {
                     self.state.program_counter += 2;
                     self.wait_cycles = 2;
                 }
-                println!("BPL ${:04X}", addr);
+                return Ok((
+                    format!("BPL ${:04X}", addr),
+                    None
+                ));
             }
             0x18 => {
                 self.state.status_register.carry_flag = false;
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("CLC");
+                return Ok((
+                    format!("CLC"),
+                    None
+                ));
             }
             0x20 => {
                 let pc = self.state.program_counter;
@@ -273,7 +285,10 @@ impl Machine {
                 let addr = self.read_absolute_addr();
                 self.state.program_counter = addr;
                 self.wait_cycles = 6;
-                println!("JSR ${:04X}", addr);
+                return Ok((
+                    format!("JSR ${:04X}", addr),
+                    None
+                ));
             }
             0x29 => {
                 let operand = self.read_immediate();
@@ -283,7 +298,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
-                println!("AND #${:02X}", operand);
+                return Ok((
+                    format!("AND #${:02X}", operand),
+                    None
+                ));
             }
             0x2A => {
                 let shifted = (self.state.accumulator as u16) << 1;
@@ -294,18 +312,27 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("ROL A");
+                return Ok((
+                    format!("ROL A"),
+                    None
+                ));
             }
             0x4C => {
                 let addr = self.read_absolute_addr();
                 self.state.program_counter = addr;
                 self.wait_cycles = 3;
-                println!("JMP ${:04X}", addr);
+                return Ok((
+                    format!("JMP ${:04X}", addr),
+                    None
+                ));
             }
             0x60 => {
                 self.state.program_counter = self.pop16() + 1;
                 self.wait_cycles = 6;
-                println!("RTS");
+                return Ok((
+                    format!("RTS"),
+                    None
+                ));
             }
             0x69 => {
                 let accumulator = self.state.accumulator;
@@ -319,13 +346,19 @@ impl Machine {
                 self.state.status_register.overflow_flag = (accumulator as i8) >= 0 && (operand as i8) >= 0 && (value as i8) < 0;
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
-                println!("ADC #${:02X}", operand);
+                return Ok((
+                    format!("ADC #${:02X}", operand),
+                    None
+                ));
             }
             0x78 => {
                 self.state.status_register.interrupt_disable_flag = true;
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("SEI");
+                return Ok((
+                    format!("SEI"),
+                    None
+                ));
             }
             0x8D => {
                 let addr = self.read_absolute_addr();
@@ -333,8 +366,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
-                println!("STA ${:04X}", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STA ${:04X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x85 => {
                 let addr = self.read_zeropage_addr();
@@ -342,8 +377,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
-                println!("STA ${:02X}", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STA ${:02X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x84 => {
                 let addr = self.read_zeropage_addr();
@@ -351,8 +388,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
-                println!("STY ${:02X}", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STY ${:02X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x86 => {
                 let addr = self.read_zeropage_addr();
@@ -360,8 +399,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
-                println!("STX ${:02X}", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STX ${:02X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x88 => {
                 let value = self.state.index_y.wrapping_sub(1);
@@ -370,7 +411,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("DEY");
+                return Ok((
+                    format!("DEY"),
+                    None
+                ));
             }
             0x8A => {
                 let value = self.state.index_x;
@@ -379,7 +423,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("TXA");
+                return Ok((
+                    format!("TXA"),
+                    None
+                ));
             }
             0x8C => {
                 let addr = self.read_absolute_addr();
@@ -387,8 +434,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
-                println!("STY ${:04X}", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STY ${:04X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x8E => {
                 let addr = self.read_absolute_addr();
@@ -396,8 +445,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
-                println!("STX ${:04X}", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STX ${:04X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x90 => {
                 let addr = self.read_relative_addr() + 2;
@@ -408,7 +459,10 @@ impl Machine {
                     self.state.program_counter += 2;
                     self.wait_cycles = 2;
                 }
-                println!("BCC ${:04X}", addr);
+                return Ok((
+                    format!("BCC ${:04X}", addr),
+                    None
+                ));
             }
             0x91 => {
                 let (vector_addr, addr) = self.read_indirect_y_indexed_addr();
@@ -416,8 +470,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 6;
-                println!("STA (${:02X}),Y", vector_addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STA (${:02X}),Y", vector_addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x94 => {
                 let (base_addr, addr) = self.read_indexed_zeropage_x();
@@ -425,8 +481,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 4;
-                println!("STY ${:02X},X", base_addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STY ${:02X},X", base_addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x95 => {
                 let (base_addr, addr) = self.read_indexed_zeropage_x();
@@ -434,8 +492,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 4;
-                println!("STA ${:02X},X", base_addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STA ${:02X},X", base_addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x98 => {
                 let value = self.state.index_y;
@@ -444,7 +504,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("TYA");
+                return Ok((
+                    format!("TYA"),
+                    None
+                ));
             }
             0x99 => {
                 let abs_addr = self.read_absolute_addr();
@@ -453,14 +516,19 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 5;
-                println!("STA ${:04X},Y", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STA ${:04X},Y", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0x9A => {
                 self.state.stack_pointer = self.state.index_x;
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("TXS");
+                return Ok((
+                    format!("TXS"),
+                    None
+                ));
             }
             0x9D => {
                 let abs_addr = self.read_absolute_addr();
@@ -469,8 +537,10 @@ impl Machine {
                 self.write_mem(addr, value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 5;
-                println!("STA ${:04X},X", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("STA ${:04X},X", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
             0xA5 => {
                 let addr = self.read_zeropage_addr();
@@ -480,7 +550,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
-                println!("LDA ${:02X}", addr);
+                return Ok((
+                    format!("LDA ${:02X}", addr),
+                    None
+                ));
             }
             0xAA => {
                 let value = self.state.accumulator;
@@ -489,7 +562,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("TAX");
+                return Ok((
+                    format!("TAX"),
+                    None
+                ));
             }
             0xA0 => {
                 let value = self.read_immediate();
@@ -498,7 +574,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
-                println!("LDY #${:02X}", value);
+                return Ok((
+                    format!("LDY #${:02X}", value),
+                    None
+                ));
             }
             0xA2 => {
                 let value = self.read_mem(self.state.program_counter + 1);
@@ -507,7 +586,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
-                println!("LDX #${:02X}", value);
+                return Ok((
+                    format!("LDX #${:02X}", value),
+                    None
+                ));
             }
             0xA4 => {
                 let addr = self.read_zeropage_addr();
@@ -517,7 +599,23 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
-                println!("LDY ${:02X}", addr);
+                return Ok((
+                    format!("LDY ${:02X}", addr),
+                    None
+                ));
+            }
+            0xA6 => {
+                let addr = self.read_zeropage_addr();
+                let value = self.read_mem(addr);
+                self.state.index_x = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 2;
+                self.wait_cycles = 3;
+                return Ok((
+                    format!("LDX ${:02X}", addr),
+                    None
+                ));
             }
             0xA8 => {
                 let value = self.state.accumulator;
@@ -526,7 +624,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("TAY");
+                return Ok((
+                    format!("TAY"),
+                    None
+                ));
             }
             0xA9 => {
                 let value = self.read_mem(self.state.program_counter + 1);
@@ -535,7 +636,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
-                println!("LDA #${:02X}", value);
+                return Ok((
+                    format!("LDA #${:02X}", value),
+                    None
+                ));
             }
             0xAD => {
                 let addr = self.read_absolute_addr();
@@ -545,7 +649,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
                 self.wait_cycles = 4;
-                println!("LDA ${:04X}", addr);
+                return Ok((
+                    format!("LDA ${:04X}", addr),
+                    None
+                ));
             }
             0xB0 => {
                 let addr = self.read_relative_addr() + 2;
@@ -556,7 +663,10 @@ impl Machine {
                     self.state.program_counter += 2;
                     self.wait_cycles = 2;
                 }
-                println!("BCS ${:04X}", addr);
+                return Ok((
+                    format!("BCS ${:04X}", addr),
+                    None
+                ));
             }
             0xB1 => {
                 let (vector_addr, addr) = self.read_indirect_y_indexed_addr();
@@ -566,7 +676,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = if same_page(self.state.program_counter, addr) { 5 } else { 6 };
-                println!("LDA (${:02X}),Y", vector_addr);
+                return Ok((
+                    format!("LDA (${:02X}),Y", vector_addr),
+                    None
+                ));
             }
             0xB5 => {
                 let (base_addr, addr) = self.read_indexed_zeropage_x();
@@ -576,7 +689,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 4;
-                println!("LDA ${:02X},X", base_addr);
+                return Ok((
+                    format!("LDA ${:02X},X", base_addr),
+                    None
+                ));
             }
             0xB9 => {
                 let abs_addr = self.read_absolute_addr();
@@ -587,7 +703,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
                 self.wait_cycles = if same_page(self.state.program_counter, addr) { 4 } else { 5 };
-                println!("LDA ${:04X},Y", abs_addr);
+                return Ok((
+                    format!("LDA ${:04X},Y", abs_addr),
+                    None
+                ));
             }
             0xBD => {
                 let abs_addr = self.read_absolute_addr();
@@ -598,7 +717,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 3;
                 self.wait_cycles = if same_page(self.state.program_counter, addr) { 4 } else { 5 };
-                println!("LDA ${:04X},X", abs_addr);
+                return Ok((
+                    format!("LDA ${:04X},X", abs_addr),
+                    None
+                ));
             }
             0xC8 => {
                 let value = self.state.index_y.wrapping_add(1);
@@ -607,7 +729,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("INY");
+                return Ok((
+                    format!("INY"),
+                    None
+                ));
             }
             0xCA => {
                 let value = self.state.index_x.wrapping_sub(1);
@@ -616,7 +741,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("DEX");
+                return Ok((
+                    format!("DEX"),
+                    None
+                ));
             }
             0xD0 => {
                 let addr = self.read_relative_addr() + 2;
@@ -627,7 +755,10 @@ impl Machine {
                     self.state.program_counter += 2;
                     self.wait_cycles = 2;
                 }
-                println!("BNE ${:04X}", addr);
+                return Ok((
+                    format!("BNE ${:04X}", addr),
+                    None
+                ));
             }
             0xD1 => {
                 let (vector_addr, addr) = self.read_indirect_y_indexed_addr();
@@ -636,13 +767,19 @@ impl Machine {
                 self.compare(operand1, operand2);
                 self.state.program_counter += 2;
                 self.wait_cycles = if same_page(self.state.program_counter, addr) { 5 } else { 6 };
-                println!("CMP (${:02X}),Y", vector_addr);
+                return Ok((
+                    format!("CMP (${:02X}),Y", vector_addr),
+                    None
+                ));
             }
             0xD8 => {
                 self.state.status_register.decimal_mode_flag = false;
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("CLD");
+                return Ok((
+                    format!("CLD"),
+                    None
+                ));
             }
             0xDD => {
                 let abs_addr = self.read_absolute_addr();
@@ -652,7 +789,10 @@ impl Machine {
                 self.compare(operand1, operand2);
                 self.state.program_counter += 3;
                 self.wait_cycles = if same_page(self.state.program_counter, addr) { 4 } else { 5 };
-                println!("CMP ${:04X},X", abs_addr);
+                return Ok((
+                    format!("CMP ${:04X},X", abs_addr),
+                    None
+                ));
             }
             0xE0 => {
                 let operand1 = self.state.index_x;
@@ -660,7 +800,10 @@ impl Machine {
                 self.compare(operand1, operand2);
                 self.state.program_counter += 2;
                 self.wait_cycles = 2;
-                println!("CPX #${:02X}", operand2);
+                return Ok((
+                    format!("CPX #${:02X}", operand2),
+                    None
+                ));
             }
             0xE6 => {
                 let addr = self.read_zeropage_addr();
@@ -670,8 +813,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 2;
                 self.wait_cycles = 5;
-                println!("INC ${:02X}", addr);
-                return Ok(Some(Effect::WriteMem { addr, value }));
+                return Ok((
+                    format!("INC ${:02X}", addr),
+                    Some(Effect::WriteMem { addr, value })
+                ));
             }
              0xE8 => {
                 let value = self.state.index_x.wrapping_add(1);
@@ -680,7 +825,10 @@ impl Machine {
                 self.set_zero_flag(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 2;
-                println!("INX");
+                return Ok((
+                    format!("INX"),
+                    None
+                ));
             }
             0xF0 => {
                 let addr = self.read_relative_addr() + 2;
@@ -691,25 +839,26 @@ impl Machine {
                     self.state.program_counter += 2;
                     self.wait_cycles = 2;
                 }
-                println!("BEQ ${:04X}", addr)
+                return Ok((
+                    format!("BEQ ${:04X}", addr),
+                    None
+                ));
             }
             _ => {
                 let msg = format!("UNKNOWN OPCODE: 0x{:02X}", opcode);
                 return Err(msg);
             }
         }
-
-        return Ok(None);
     }
 
-    fn tick(self: &mut Machine) -> Result<Option<Effect>, String> {
+    fn tick(self: &mut Machine) -> Result<(Option<String>, Option<Effect>), String> {
         self.vic.tick(&self.vic_bank);
 
         self.wait_cycles -= 1;
         if self.wait_cycles <= 0 {
-            self.run_instruction()
+            self.run_instruction().map(|(name, eff_opt)| (Some(name), eff_opt))
         } else {
-            Ok(None)
+            Ok((None, None))
         }
     }
 }
@@ -809,8 +958,14 @@ fn main() {
             DebuggerState::Step => {
                 println!();
                 machine.print_status();
-                if let Err(msg) = machine.tick() {
-                    println!("{}", msg);
+                match machine.tick() {
+                    Ok((Some(name), _)) => {
+                        println!("{}", name);
+                    }
+                    Err(msg) => {
+                        println!("{}", msg);
+                    }
+                    _ => {}
                 }
             }
             DebuggerState::Run { verbose } => {
@@ -826,14 +981,24 @@ fn main() {
                     }
 
                     match machine.tick() {
-                        Ok(Some(Effect::WriteMem { addr, value })) => {
+                        Ok((name_opt, Some(Effect::WriteMem { addr, value }))) => {
+                            if let Some(name) = name_opt {
+                                if verbose {
+                                    println!("{}", name);
+                                }
+                            }
                             if debugger.watchpoints.contains(&addr) {
                                 debugger.state = DebuggerState::Pause;
                                 println!("Write detected at watchpoint: 0x{:02X} -> 0x{:04X}", value, addr);
                                 break;
                             }
                         }
-                        Ok(None) => {}
+                        Ok((Some(name), None)) => {
+                            if verbose {
+                                println!("{}", name);
+                            }
+                        }
+                        Ok((None, None)) => {}
                         Err(msg) => {
                             println!("{}", msg);
                             break;
