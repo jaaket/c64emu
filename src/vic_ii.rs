@@ -3,11 +3,50 @@ extern crate gl;
 
 use memory::ReadView;
 
+pub struct Registers {
+    border_color: u8
+}
+
+impl Registers {
+    fn new() -> Registers {
+        Registers {
+            border_color: 0
+        }
+    }
+
+    pub fn write(self: &mut Registers, addr: u16, value: u8) {
+        match addr {
+            0xD020 => self.border_color = value & 0x0F,
+            _ => println!("Unsupported write to VIC register: ${:02X} -> ${:04X}", value, addr)
+        }
+    }
+}
+
+const PALETTE: [sdl2::pixels::Color; 16] = [
+    sdl2::pixels::Color { r: 0x00, g: 0x00, b: 0x00, a: 0x00 },
+    sdl2::pixels::Color { r: 0xff, g: 0xff, b: 0xff, a: 0x00 },
+    sdl2::pixels::Color { r: 0x81, g: 0x33, b: 0x38, a: 0x00 },
+    sdl2::pixels::Color { r: 0x75, g: 0xce, b: 0xc8, a: 0x00 },
+    sdl2::pixels::Color { r: 0x8e, g: 0x3c, b: 0x97, a: 0x00 },
+    sdl2::pixels::Color { r: 0x56, g: 0xac, b: 0x4d, a: 0x00 },
+    sdl2::pixels::Color { r: 0x2e, g: 0x2c, b: 0x9b, a: 0x00 },
+    sdl2::pixels::Color { r: 0xed, g: 0xf1, b: 0x71, a: 0x00 },
+    sdl2::pixels::Color { r: 0x8e, g: 0x50, b: 0x29, a: 0x00 },
+    sdl2::pixels::Color { r: 0x55, g: 0x38, b: 0x00, a: 0x00 },
+    sdl2::pixels::Color { r: 0xc4, g: 0x6c, b: 0x71, a: 0x00 },
+    sdl2::pixels::Color { r: 0x4a, g: 0x4a, b: 0x4a, a: 0x00 },
+    sdl2::pixels::Color { r: 0x7b, g: 0x7b, b: 0x7b, a: 0x00 },
+    sdl2::pixels::Color { r: 0xa9, g: 0xff, b: 0x9f, a: 0x00 },
+    sdl2::pixels::Color { r: 0x70, g: 0x6d, b: 0xeb, a: 0x00 },
+    sdl2::pixels::Color { r: 0xb2, g: 0xb2, b: 0xb2, a: 0x00 }
+];
+
 pub struct VicII {
     canvas: sdl2::render::Canvas<sdl2::video::Window>,
     event_pump: sdl2::EventPump,
     raster_line: u16,
-    x_coord: u16
+    x_coord: u16,
+    pub registers: Registers
 }
 
 fn find_sdl_gl_driver() -> Option<u32> {
@@ -43,7 +82,8 @@ impl VicII {
             canvas: canvas,
             event_pump: event_pump,
             raster_line: 0,
-            x_coord: 0
+            x_coord: 0,
+            registers: Registers::new()
         }
     }
 
@@ -59,12 +99,12 @@ impl VicII {
 
     fn first_x_coord(self: &VicII) -> u16 {
         // TODO: Choose according to CSEL
-        24
+        96
     }
 
     fn last_x_coord(self: &VicII) -> u16 {
         // TODO: Choose according to CSEL
-        343
+        415
     }
 
     pub fn tick<M: ReadView>(self: &mut VicII, mem: &M) {
@@ -84,6 +124,17 @@ impl VicII {
                 } else {
                     self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
                 }
+                self.canvas.draw_point((self.x_coord as i32 + i, self.raster_line as i32)).unwrap();
+            }
+        }
+
+        if (self.raster_line >= 0x08 && self.raster_line < self.first_line()) ||
+            (self.raster_line > self.last_line() && self.raster_line <= 0x12C) ||
+            (self.x_coord >= 52 && self.x_coord < self.first_x_coord()) ||
+            (self.x_coord > self.last_x_coord() && self.x_coord <= 454) {
+
+            self.canvas.set_draw_color(PALETTE[self.registers.border_color as usize]);
+            for i in 0..8 {
                 self.canvas.draw_point((self.x_coord as i32 + i, self.raster_line as i32)).unwrap();
             }
         }
