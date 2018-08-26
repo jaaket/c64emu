@@ -1,6 +1,8 @@
 extern crate sdl2;
 extern crate gl;
 
+use memory::ReadView;
+
 pub struct VicII {
     canvas: sdl2::render::Canvas<sdl2::video::Window>,
     event_pump: sdl2::EventPump,
@@ -53,11 +55,11 @@ impl VicII {
         // panic!("Unhandled write to VIC-II register: 0x{:02X} -> 0x{:04X}", value, addr);
     }
 
-    pub fn read(self: &VicII, addr: u16, ram: &[u8]) -> u8 {
+    pub fn read<M: ReadView>(self: &VicII, mem: &M, addr: u16) -> u8 {
         if self.char_rom_enabled && addr >= 0x1000 && addr < 0x2000 {
             self.char_rom[addr as usize - 0x1000]
         } else {
-            ram[addr as usize]
+            mem.read(addr)
         }
     }
 
@@ -89,7 +91,7 @@ impl VicII {
         343
     }
 
-    pub fn tick(self: &mut VicII, ram: &[u8]) {
+    pub fn tick<M: ReadView>(self: &mut VicII, mem: &M) {
         if self.raster_line >= self.first_line() && self.raster_line <= self.last_line() &&
             self.x_coord >= self.first_x_coord() && self.x_coord <= self.last_x_coord() {
 
@@ -97,8 +99,8 @@ impl VicII {
             let char_y = (self.raster_line - self.first_line()) / 8;
             let char_x = (self.x_coord - self.first_x_coord()) / 8;
             let char_addr = base_addr + char_y * 40 + char_x;
-            let char_ptr = self.read(char_addr, ram) as u16;
-            let data = self.read(0x1000 + char_ptr * 8 + (self.raster_line - self.first_line()) % 8, ram);
+            let char_ptr = self.read(mem, char_addr) as u16;
+            let data = self.read(mem, 0x1000 + char_ptr * 8 + (self.raster_line - self.first_line()) % 8);
 
             for i in 0..8 {
                 if data & (0x80 >> i) > 0 {
