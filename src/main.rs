@@ -50,8 +50,8 @@ fn same_page(a: u16, b: u16) -> bool {
 
 #[derive(PartialEq)]
 enum MemoryRegion {
-    ROM,
-    CHAR_ROM
+    Rom,
+    CharRom
 }
 
 enum Effect {
@@ -96,13 +96,13 @@ impl Machine {
             let f = File::open(filename).expect(&format!("file not found: {}", filename));
             let target =
                 match memory_region {
-                    MemoryRegion::ROM => &mut self.memory[offset..],
-                    MemoryRegion::CHAR_ROM => &mut self.char_rom[offset..]
+                    MemoryRegion::Rom => &mut self.memory[offset..],
+                    MemoryRegion::CharRom => &mut self.char_rom[offset..]
                 };
             f.bytes().zip(target).for_each(|(byte, memory_byte)| *memory_byte = byte.unwrap());
         }
 
-        if memory_region == MemoryRegion::CHAR_ROM {
+        if memory_region == MemoryRegion::CharRom {
             self.vic.char_rom.copy_from_slice(&self.char_rom[..]);
         }
     }
@@ -1386,9 +1386,9 @@ fn main() {
     let mut machine = Machine::new();
     let mut debugger = Debugger::new();
 
-    machine.load_file("basic.rom", MemoryRegion::ROM, 0xA000);
-    machine.load_file("kernal.rom", MemoryRegion::ROM, 0xE000);
-    machine.load_file("char.rom", MemoryRegion::CHAR_ROM, 0);
+    machine.load_file("basic.rom", MemoryRegion::Rom, 0xA000);
+    machine.load_file("kernal.rom", MemoryRegion::Rom, 0xE000);
+    machine.load_file("char.rom", MemoryRegion::CharRom, 0);
 
     machine.reset();
 
