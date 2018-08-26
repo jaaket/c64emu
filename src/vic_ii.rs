@@ -4,21 +4,23 @@ extern crate gl;
 use memory::ReadView;
 
 pub struct Registers {
-    border_color: u8
+    data: [u8; 47]
 }
 
 impl Registers {
     fn new() -> Registers {
         Registers {
-            border_color: 0
+            data: [0; 47]
         }
     }
 
     pub fn write(self: &mut Registers, addr: u16, value: u8) {
-        match addr {
-            0xD020 => self.border_color = value & 0x0F,
-            _ => println!("Unsupported write to VIC register: ${:02X} -> ${:04X}", value, addr)
-        }
+        self.data[(addr - 0xD000) as usize] = value;
+        println!("Write to VIC register: ${:02X} -> ${:04X}", value, addr);
+    }
+
+    fn border_color(self: &Registers) -> u8 {
+        self.data[0x20] & 0x0F
     }
 }
 
@@ -133,7 +135,7 @@ impl VicII {
             (self.x_coord >= 52 && self.x_coord < self.first_x_coord()) ||
             (self.x_coord > self.last_x_coord() && self.x_coord <= 454) {
 
-            self.canvas.set_draw_color(PALETTE[self.registers.border_color as usize]);
+            self.canvas.set_draw_color(PALETTE[self.registers.border_color() as usize]);
             for i in 0..8 {
                 self.canvas.draw_point((self.x_coord as i32 + i, self.raster_line as i32)).unwrap();
             }
