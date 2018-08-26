@@ -100,10 +100,6 @@ impl VicII {
             let char_ptr = self.read(char_addr, ram) as u16;
             let data = self.read(0x1000 + char_ptr * 8 + (self.raster_line - self.first_line()) % 8, ram);
 
-            if self.raster_line == self.first_line() && self.x_coord == self.first_x_coord() {
-                println!("{:04X}: {:02X}", char_addr, char_ptr);
-            }
-
             for i in 0..8 {
                 if data & (0x80 >> i) > 0 {
                     self.canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
