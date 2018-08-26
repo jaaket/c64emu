@@ -23,8 +23,9 @@ struct Machine {
     ram: [u8; 65536],
     io: [u8; 65536],
     char_rom: [u8; 4096],
-    mos6510: Mos6510,
+    char_rom_enabled: bool,
     vic_bank_start: u16,
+    mos6510: Mos6510,
     vic: VicII
 }
 
@@ -39,16 +40,16 @@ struct Mos6510Memory<'a> {
     ram: &'a mut [u8],
     io: &'a mut [u8],
     vic_bank_start: u16,
-    vic: &'a mut VicII
+    char_rom_enabled: &'a mut bool
 }
 
 impl<'a> Mos6510Memory<'a> {
-    fn new(ram: &'a mut [u8], io: &'a mut [u8], vic_bank_start: u16, vic: &'a mut VicII) -> Mos6510Memory<'a> {
+    fn new(ram: &'a mut [u8], io: &'a mut [u8], vic_bank_start: u16, char_rom_enabled: &'a mut bool) -> Mos6510Memory<'a> {
         Mos6510Memory {
             ram,
             io,
             vic_bank_start,
-            vic
+            char_rom_enabled
         }
     }
 }
@@ -78,11 +79,7 @@ impl<'a> WriteView for Mos6510Memory<'a> {
             self.io[addr as usize] = value;
             if addr == 0xDD00 {
                 self.vic_bank_start = 16384 * (0b11 - (value as u16 & 0b11));
-                if value & 1 > 0 {
-                    self.vic.enable_char_rom();
-                } else {
-                    self.vic.disable_char_rom();
-                }
+                *self.char_rom_enabled = value & 1 > 0;
             }
         } else {
             self.ram[addr as usize] = value;
@@ -91,20 +88,28 @@ impl<'a> WriteView for Mos6510Memory<'a> {
 }
 
 struct VicMemory<'a> {
-    ram: &'a [u8]
+    ram: &'a [u8],
+    char_rom: &'a [u8],
+    char_rom_enabled: bool
 }
 
 impl<'a> VicMemory<'a> {
-    fn new(ram: &'a [u8]) -> VicMemory {
+    fn new(ram: &'a [u8], char_rom: &'a [u8], char_rom_enabled: bool) -> VicMemory<'a> {
         VicMemory {
-            ram
+            ram,
+            char_rom,
+            char_rom_enabled
         }
     }
 }
 
 impl<'a> ReadView for VicMemory<'a> {
     fn read(self: &VicMemory<'a>, addr: u16) -> u8 {
-        self.ram[addr as usize]
+        if self.char_rom_enabled && addr >= 0x1000 && addr < 0x2000 {
+            self.char_rom[addr as usize - 0x1000]
+        } else {
+            self.ram[addr as usize]
+        }
     }
 }
 
@@ -114,6 +119,7 @@ impl Machine {
             ram: [0; 65536],
             io: [0; 65536],
             char_rom: [0; 4096],
+            char_rom_enabled: false,
             mos6510: Mos6510::new(),
             vic_bank_start: 0xC000,
             vic: VicII::new()
@@ -121,28 +127,22 @@ impl Machine {
     }
 
     fn reset(self: &mut Machine) {
-        self.mos6510.reset(&Mos6510Memory::new(&mut self.ram, &mut self.io, self.vic_bank_start, &mut self.vic));
+        self.mos6510.reset(&Mos6510Memory::new(&mut self.ram, &mut self.io, self.vic_bank_start, &mut self.char_rom_enabled));
     }
 
     fn load_file(self: &mut Machine, filename: &str, memory_region: MemoryRegion, offset: usize) {
-        {
-            let f = File::open(filename).expect(&format!("file not found: {}", filename));
-            let target =
-                match memory_region {
-                    MemoryRegion::Rom => &mut self.ram[offset..],
-                    MemoryRegion::CharRom => &mut self.char_rom[offset..]
-                };
-            f.bytes().zip(target).for_each(|(byte, memory_byte)| *memory_byte = byte.unwrap());
-        }
-
-        if memory_region == MemoryRegion::CharRom {
-            self.vic.char_rom.copy_from_slice(&self.char_rom[..]);
-        }
+        let f = File::open(filename).expect(&format!("file not found: {}", filename));
+        let target =
+            match memory_region {
+                MemoryRegion::Rom => &mut self.ram[offset..],
+                MemoryRegion::CharRom => &mut self.char_rom[offset..]
+            };
+        f.bytes().zip(target).for_each(|(byte, memory_byte)| *memory_byte = byte.unwrap());
     }
 
     fn tick(self: &mut Machine) -> Result<(Option<String>, Option<Effect>), String> {
-        self.vic.tick(&VicMemory::new(&self.ram));
-        self.mos6510.tick(&mut Mos6510Memory::new(&mut self.ram, &mut self.io, self.vic_bank_start, &mut self.vic))
+        self.vic.tick(&VicMemory::new(&self.ram, &self.char_rom, self.char_rom_enabled));
+        self.mos6510.tick(&mut Mos6510Memory::new(&mut self.ram, &mut self.io, self.vic_bank_start, &mut self.char_rom_enabled))
     }
 }
 
@@ -333,7 +333,7 @@ fn main() {
                 debugger.state = DebuggerState::Pause;
             }
             DebuggerCommand::Inspect { addr } => {
-                let mem = Mos6510Memory::new(&mut machine.ram, &mut machine.io, machine.vic_bank_start, &mut machine.vic);
+                let mem = Mos6510Memory::new(&mut machine.ram, &mut machine.io, machine.vic_bank_start, &mut machine.char_rom_enabled);
                 println!("Memory at 0x{:04X}: 0x{:02X}", addr, mem.read(addr));
                 debugger.state = DebuggerState::Pause;
             }

@@ -6,8 +6,6 @@ use memory::ReadView;
 pub struct VicII {
     canvas: sdl2::render::Canvas<sdl2::video::Window>,
     event_pump: sdl2::EventPump,
-    pub char_rom: [u8; 4096],
-    char_rom_enabled: bool,
     raster_line: u16,
     x_coord: u16
 }
@@ -45,30 +43,8 @@ impl VicII {
             canvas: canvas,
             event_pump: event_pump,
             raster_line: 0,
-            x_coord: 0,
-            char_rom: [0; 4096],
-            char_rom_enabled: false
+            x_coord: 0
         }
-    }
-
-    pub fn write(self: &mut VicII, addr: u16, value: u8) {
-        // panic!("Unhandled write to VIC-II register: 0x{:02X} -> 0x{:04X}", value, addr);
-    }
-
-    pub fn read<M: ReadView>(self: &VicII, mem: &M, addr: u16) -> u8 {
-        if self.char_rom_enabled && addr >= 0x1000 && addr < 0x2000 {
-            self.char_rom[addr as usize - 0x1000]
-        } else {
-            mem.read(addr)
-        }
-    }
-
-    pub fn enable_char_rom(self: &mut VicII) {
-        self.char_rom_enabled = true;
-    }
-
-    pub fn disable_char_rom(self: &mut VicII) {
-        self.char_rom_enabled = false;
     }
 
     fn first_line(self: &VicII) -> u16 {
@@ -99,8 +75,8 @@ impl VicII {
             let char_y = (self.raster_line - self.first_line()) / 8;
             let char_x = (self.x_coord - self.first_x_coord()) / 8;
             let char_addr = base_addr + char_y * 40 + char_x;
-            let char_ptr = self.read(mem, char_addr) as u16;
-            let data = self.read(mem, 0x1000 + char_ptr * 8 + (self.raster_line - self.first_line()) % 8);
+            let char_ptr = mem.read(char_addr) as u16;
+            let data = mem.read(0x1000 + char_ptr * 8 + (self.raster_line - self.first_line()) % 8);
 
             for i in 0..8 {
                 if data & (0x80 >> i) > 0 {
