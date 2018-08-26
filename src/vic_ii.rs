@@ -19,6 +19,10 @@ impl Registers {
         println!("Write to VIC register: ${:02X} -> ${:04X}", value, addr);
     }
 
+    fn background_color_0(self: &Registers) -> u8 {
+        self.data[0x21] & 0x0F
+    }
+
     fn border_color(self: &Registers) -> u8 {
         self.data[0x20] & 0x0F
     }
@@ -109,7 +113,7 @@ impl VicII {
         415
     }
 
-    pub fn tick<M: ReadView>(self: &mut VicII, mem: &M) {
+    pub fn tick<M: ReadView>(self: &mut VicII, mem: &M, color_ram: &[u8]) {
         if self.raster_line >= self.first_line() && self.raster_line <= self.last_line() &&
             self.x_coord >= self.first_x_coord() && self.x_coord <= self.last_x_coord() {
 
@@ -121,11 +125,12 @@ impl VicII {
             let data = mem.read(0x1000 + char_ptr * 8 + (self.raster_line - self.first_line()) % 8);
 
             for i in 0..8 {
-                if data & (0x80 >> i) > 0 {
-                    self.canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
+                let color_index = if data & (0x80 >> i) > 0 {
+                    color_ram[char_y as usize * 40 + char_x as usize]
                 } else {
-                    self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
-                }
+                    self.registers.background_color_0()
+                };
+                self.canvas.set_draw_color(PALETTE[color_index as usize]);
                 self.canvas.draw_point((self.x_coord as i32 + i, self.raster_line as i32)).unwrap();
             }
         }
