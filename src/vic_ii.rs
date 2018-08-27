@@ -146,15 +146,14 @@ impl VicII {
             }
         }
 
-        self.canvas.present();
-
         self.x_coord += 8;
         if self.x_coord >= 504 {
             self.raster_line += 1;
             self.x_coord = 0;
         }
         if self.raster_line >= 312 {
-            self.raster_line = 0
+            self.raster_line = 0;
+            self.canvas.present();
         }
 
         for event in self.event_pump.poll_iter() {
