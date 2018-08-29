@@ -345,8 +345,8 @@ impl Mos6510 {
                 let operand = mem.read(addr);
                 let value = self.state.accumulator & operand;
                 self.set_zero_flag(value);
-                self.set_negative_flag(value);
-                self.state.status_register.overflow_flag = value & 0b0100_0000 > 0;
+                self.state.status_register.negative_flag = operand & 0b1000_0000 > 0;
+                self.state.status_register.overflow_flag = operand & 0b0100_0000 > 0;
                 self.state.program_counter += 2;
                 self.wait_cycles = 3;
                 return Ok((
