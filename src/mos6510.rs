@@ -767,7 +767,7 @@ impl Mos6510 {
                 self.state.program_counter += 3;
                 self.wait_cycles = 5;
                 return Ok((
-                    format!("STA ${:04X},Y", addr),
+                    format!("STA ${:04X},Y", abs_addr),
                     Some(Effect::WriteMem { addr, value })
                 ));
             }
