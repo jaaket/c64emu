@@ -181,7 +181,7 @@ impl Mos6510 {
         let subtracted = accumulator as i8 as i16 - operand as i8 as i16 - if self.state.status_register.carry_flag { 0 } else { 1 };
         let value = subtracted as u8;
         self.state.accumulator = value;
-        self.state.status_register.carry_flag = subtracted < 0 || subtracted > 255;
+        self.state.status_register.carry_flag = (accumulator as u8) >= (operand as u8);
         self.set_negative_flag(value);
         self.set_zero_flag(value);
         self.state.status_register.overflow_flag = subtracted < -128 || subtracted > 127;
