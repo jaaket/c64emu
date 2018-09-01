@@ -22,7 +22,8 @@ struct State {
 
 pub struct Mos6510 {
     state: State,
-    wait_cycles: i8
+    wait_cycles: i8,
+    irq: bool
 }
 
 const RESET_VECTOR_ADDR: u16 = 0xfffc;
@@ -45,7 +46,7 @@ impl Mos6510 {
                     negative_flag: false,
                     overflow_flag: false,
                     // unused: true,
-                    break_flag: true,
+                    break_flag: false,
                     decimal_mode_flag: false,
                     interrupt_disable_flag: false,
                     zero_flag: false,
@@ -55,7 +56,8 @@ impl Mos6510 {
                 index_x: 0,
                 index_y: 0
             },
-            wait_cycles: 0
+            wait_cycles: 0,
+            irq: false
          }
     }
 
@@ -79,7 +81,7 @@ impl Mos6510 {
         );
     }
 
-    pub fn reset<M: ReadView>(self: &mut Mos6510, mem: &M) {
+    pub fn reset<M: ReadView>(self: &mut Mos6510, mem: &mut M) {
         self.state.program_counter = mem.read(RESET_VECTOR_ADDR) as u16 | ((mem.read(RESET_VECTOR_ADDR + 1) as u16) << 8);
     }
 
@@ -103,12 +105,12 @@ impl Mos6510 {
         self.state.stack_pointer -= 1;
     }
 
-    fn pop8<M: ReadView>(self: &mut Mos6510, mem: &M) -> u8 {
+    fn pop8<M: ReadView>(self: &mut Mos6510, mem: &mut M) -> u8 {
         self.state.stack_pointer += 1;
         mem.read(self.effective_stack_pointer())
     }
 
-    fn pop16<M: ReadView>(self: &mut Mos6510, mem: &M) -> u16 {
+    fn pop16<M: ReadView>(self: &mut Mos6510, mem: &mut M) -> u16 {
         self.state.stack_pointer += 1;
         let lo = mem.read(self.effective_stack_pointer());
         self.state.stack_pointer += 1;
@@ -116,27 +118,27 @@ impl Mos6510 {
         ((hi as u16) << 8) + lo as u16
     }
 
-    fn read_absolute_addr<M: ReadView>(self: &Mos6510, mem: &M) -> u16 {
+    fn read_absolute_addr<M: ReadView>(self: &Mos6510, mem: &mut M) -> u16 {
         mem.read(self.state.program_counter + 1) as u16 +
         ((mem.read(self.state.program_counter + 2) as u16) << 8)
     }
 
-    fn read_relative_addr<M: ReadView>(self: &Mos6510, mem: &M) -> u16 {
+    fn read_relative_addr<M: ReadView>(self: &Mos6510, mem: &mut M) -> u16 {
         let base = self.state.program_counter as i32;
         // ... as i8 as i32 <- first interpret as signed 8-bit value, then sign-extend to 32 bits
         let offset = mem.read(self.state.program_counter + 1) as i8 as i32;
         (base + offset) as u16
     }
 
-    fn read_immediate<M: ReadView>(self: &Mos6510, mem: &M) -> u8 {
+    fn read_immediate<M: ReadView>(self: &Mos6510, mem: &mut M) -> u8 {
         mem.read(self.state.program_counter + 1)
     }
 
-    fn read_zeropage_addr<M: ReadView>(self: &Mos6510, mem: &M) -> u16 {
+    fn read_zeropage_addr<M: ReadView>(self: &Mos6510, mem: &mut M) -> u16 {
         mem.read(self.state.program_counter + 1) as u16
     }
 
-    fn read_indirect_y_indexed_addr<M: ReadView>(self: &Mos6510, mem: &M) -> (u16, u16) {
+    fn read_indirect_y_indexed_addr<M: ReadView>(self: &Mos6510, mem: &mut M) -> (u16, u16) {
         let vector_addr = self.read_zeropage_addr(mem);
         let vector_lo = mem.read(vector_addr);
         let vector_hi = mem.read(vector_addr + 1);
@@ -144,7 +146,7 @@ impl Mos6510 {
         (vector_addr, vector + self.state.index_y as u16)
     }
 
-    fn read_indexed_zeropage_x<M: ReadView>(self: &Mos6510, mem: &M) -> (u16, u16) {
+    fn read_indexed_zeropage_x<M: ReadView>(self: &Mos6510, mem: &mut M) -> (u16, u16) {
         let base_addr = self.read_immediate(mem);
         let addr = base_addr.wrapping_add(self.state.index_x);
         (base_addr as u16, addr as u16)
@@ -224,10 +226,45 @@ impl Mos6510 {
         self.set_zero_flag(value);
     }
 
-    pub fn tick<M: ReadView + WriteView>(self: &mut Mos6510, mem: &mut M) -> Result<(Option<String>, Option<Effect>), String> {
+    fn status_register_value(self: &Mos6510) -> u8 {
+        let value =
+            if self.state.status_register.carry_flag             { 0b0000_0001 } else { 0 } |
+            if self.state.status_register.zero_flag              { 0b0000_0010 } else { 0 } |
+            if self.state.status_register.interrupt_disable_flag { 0b0000_0100 } else { 0 } |
+            if self.state.status_register.decimal_mode_flag      { 0b0000_1000 } else { 0 } |
+            if self.state.status_register.break_flag             { 0b0001_0000 } else { 0 } |
+            if self.state.status_register.overflow_flag          { 0b0100_0000 } else { 0 } |
+            if self.state.status_register.negative_flag          { 0b1000_0000 } else { 0 };
+        value
+    }
+
+    fn set_status_register(self: &mut Mos6510, value: u8) {
+        self.state.status_register.carry_flag             = value & 0b0000_0001 > 0;
+        self.state.status_register.zero_flag              = value & 0b0000_0010 > 0;
+        self.state.status_register.interrupt_disable_flag = value & 0b0000_0100 > 0;
+        self.state.status_register.decimal_mode_flag      = value & 0b0000_1000 > 0;
+        self.state.status_register.break_flag             = value & 0b0001_0000 > 0;
+        self.state.status_register.overflow_flag          = value & 0b0100_0000 > 0;
+        self.state.status_register.negative_flag          = value & 0b1000_0000 > 0;
+    }
+
+    pub fn tick<M: ReadView + WriteView>(self: &mut Mos6510, mem: &mut M, irq: bool) -> Result<(Option<String>, Option<Effect>), String> {
+        if irq {
+            self.irq = true;
+        }
         self.wait_cycles -= 1;
         if self.wait_cycles <= 0 {
-            self.run_instruction(mem).map(|(name, eff_opt)| (Some(name), eff_opt))
+            if self.irq && !self.state.status_register.interrupt_disable_flag {
+                let pc = self.state.program_counter;
+                let sr = self.status_register_value();
+                self.push16(mem, pc);
+                self.push8(mem, sr);
+                self.state.program_counter = 0xFF48;
+                self.irq = false;
+                Ok((None, None))
+            } else {
+                self.run_instruction(mem).map(|(name, eff_opt)| (Some(name), eff_opt))
+            }
         } else {
             Ok((None, None))
         }
@@ -259,14 +296,7 @@ impl Mos6510 {
                 ))
             }
             0x08 => {
-                let value =
-                    if self.state.status_register.carry_flag             { 0b0000_0001 } else { 0 } |
-                    if self.state.status_register.zero_flag              { 0b0000_0010 } else { 0 } |
-                    if self.state.status_register.interrupt_disable_flag { 0b0000_0100 } else { 0 } |
-                    if self.state.status_register.decimal_mode_flag      { 0b0000_1000 } else { 0 } |
-                    if self.state.status_register.break_flag             { 0b0001_0000 } else { 0 } |
-                    if self.state.status_register.overflow_flag          { 0b0100_0000 } else { 0 } |
-                    if self.state.status_register.negative_flag          { 0b1000_0000 } else { 0 };
+                let value = self.status_register_value();
                 self.push8(mem, value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 3;
@@ -282,6 +312,19 @@ impl Mos6510 {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("ORA #${:02X}", operand),
+                    None
+                ));
+            }
+            0x0A => {
+                let operand = self.state.accumulator;
+                let value = operand << 1;
+                self.state.status_register.carry_flag = operand & 0x80 > 0;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("ASL"),
                     None
                 ));
             }
@@ -356,13 +399,7 @@ impl Mos6510 {
             }
             0x28 => {
                 let value = self.pop8(mem);
-                self.state.status_register.carry_flag             = value & 0b0000_0001 > 0;
-                self.state.status_register.zero_flag              = value & 0b0000_0010 > 0;
-                self.state.status_register.interrupt_disable_flag = value & 0b0000_0100 > 0;
-                self.state.status_register.decimal_mode_flag      = value & 0b0000_1000 > 0;
-                self.state.status_register.break_flag             = value & 0b0001_0000 > 0;
-                self.state.status_register.overflow_flag          = value & 0b0100_0000 > 0;
-                self.state.status_register.negative_flag          = value & 0b1000_0000 > 0;
+                self.set_status_register(value);
                 self.state.program_counter += 1;
                 self.wait_cycles = 4;
                 return Ok((
@@ -397,6 +434,20 @@ impl Mos6510 {
                     None
                 ));
             }
+            0x2C => {
+                let addr = self.read_absolute_addr(mem);
+                let operand = mem.read(addr);
+                let value = self.state.accumulator & operand;
+                self.set_zero_flag(value);
+                self.state.status_register.negative_flag = operand & 0b1000_0000 > 0;
+                self.state.status_register.overflow_flag = operand & 0b0100_0000 > 0;
+                self.state.program_counter += 3;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("BIT ${:04X}", addr),
+                    None
+                ));
+            }
             0x30 => {
                 let addr = self.read_relative_addr(mem) + 2;
                 if self.state.status_register.negative_flag {
@@ -417,6 +468,16 @@ impl Mos6510 {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("SEC"),
+                    None
+                ));
+            }
+            0x40 => {
+                let sr = self.pop8(mem);
+                let pc = self.pop16(mem);
+                self.set_status_register(sr);
+                self.state.program_counter = pc;
+                return Ok((
+                    format!("RTI"),
                     None
                 ));
             }
@@ -469,6 +530,19 @@ impl Mos6510 {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("EOR #${:02X}", operand),
+                    None
+                ));
+            }
+            0x4A => {
+                let operand = self.state.accumulator;
+                let value = operand >> 1;
+                self.state.status_register.carry_flag = operand & 1 > 0;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("LSR"),
                     None
                 ));
             }
@@ -576,6 +650,20 @@ impl Mos6510 {
                 self.wait_cycles = 5;
                 return Ok((
                     format!("JMP ({:04X})", vector_addr),
+                    None
+                ));
+            }
+            0x70 => {
+                let addr = self.read_relative_addr(mem) + 2;
+                if self.state.status_register.overflow_flag {
+                    self.state.program_counter = addr;
+                    self.wait_cycles = if same_page(self.state.program_counter, addr) { 3 } else { 4 };
+                } else {
+                    self.state.program_counter += 2;
+                    self.wait_cycles = 2;
+                }
+                return Ok((
+                    format!("BVS ${:04X}", addr),
                     None
                 ));
             }
@@ -997,6 +1085,18 @@ impl Mos6510 {
                     None
                 ));
             }
+            0xBA => {
+                let value = self.state.stack_pointer;
+                self.state.index_x = value;
+                self.set_negative_flag(value);
+                self.set_zero_flag(value);
+                self.state.program_counter += 1;
+                self.wait_cycles = 2;
+                return Ok((
+                    format!("TSX"),
+                    None
+                ));
+            }
             0xBD => {
                 let abs_addr = self.read_absolute_addr(mem);
                 let addr = abs_addr + self.state.index_x as u16;
@@ -1088,6 +1188,18 @@ impl Mos6510 {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("DEX"),
+                    None
+                ));
+            }
+            0xCD => {
+                let addr = self.read_absolute_addr(mem);
+                let operand1 = self.state.accumulator;
+                let operand2 = mem.read(addr);
+                self.compare(operand1, operand2);
+                self.state.program_counter += 3;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("CMP ${:04X}", addr),
                     None
                 ));
             }
@@ -1205,6 +1317,18 @@ impl Mos6510 {
                 self.wait_cycles = 2;
                 return Ok((
                     format!("SBC #${:02X}", operand),
+                    None
+                ));
+            }
+            0xEC => {
+                let addr = self.read_absolute_addr(mem);
+                let operand1 = self.state.index_x;
+                let operand2 = mem.read(addr);
+                self.compare(operand1, operand2);
+                self.state.program_counter += 3;
+                self.wait_cycles = 4;
+                return Ok((
+                    format!("CPX ${:04X}", addr),
                     None
                 ));
             }

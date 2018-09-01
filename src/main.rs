@@ -1,6 +1,8 @@
 #[macro_use] extern crate lazy_static;
 extern crate regex;
 extern crate rustyline;
+#[macro_use]
+extern crate bitflags;
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -19,6 +21,9 @@ use mos6510::Effect;
 mod vic_ii;
 use vic_ii::VicII;
 
+mod cia1;
+use cia1::Cia1;
+
 struct Machine {
     ram: [u8; 65536],
     io: [u8; 65536],
@@ -27,7 +32,8 @@ struct Machine {
     color_ram: [u8; 1024],
     vic_bank_start: u16,
     mos6510: Mos6510,
-    vic: VicII
+    vic: VicII,
+    cia1: Cia1
 }
 
 
@@ -43,29 +49,33 @@ struct Mos6510Memory<'a> {
     vic_registers: &'a mut vic_ii::Registers,
     vic_bank_start: u16,
     char_rom_enabled: &'a mut bool,
-    color_ram: &'a mut [u8]
+    color_ram: &'a mut [u8],
+    cia1: &'a mut Cia1
 }
 
 impl<'a> Mos6510Memory<'a> {
-    fn new(ram: &'a mut [u8], io: &'a mut [u8], vic_registers: &'a mut vic_ii::Registers, vic_bank_start: u16, char_rom_enabled: &'a mut bool, color_ram: &'a mut [u8]) -> Mos6510Memory<'a> {
+    fn new(ram: &'a mut [u8], io: &'a mut [u8], vic_registers: &'a mut vic_ii::Registers, vic_bank_start: u16, char_rom_enabled: &'a mut bool, color_ram: &'a mut [u8], cia1: &'a mut Cia1) -> Mos6510Memory<'a> {
         Mos6510Memory {
             ram,
             io,
             vic_registers,
             vic_bank_start,
             char_rom_enabled,
-            color_ram
+            color_ram,
+            cia1
         }
     }
 }
 
 impl<'a> ReadView for Mos6510Memory<'a> {
-    fn read(self: &Mos6510Memory<'a>, addr: u16) -> u8 {
+    fn read(self: &mut Mos6510Memory<'a>, addr: u16) -> u8 {
          if addr >= 0xD000 && addr < 0xD400 {
              // TODO: Read VIC-II registers
             self.io[addr as usize]
-        } else if addr >= 0xD400 && addr < 0xE000 {
+        } else if addr >= 0xD400 && addr < 0xDC00 || addr >= 0xDD00 && addr < 0xE000 {
             self.io[addr as usize]
+        } else if addr >= 0xDC00 && addr < 0xDD00 {
+            self.cia1.read(addr)
         } else {
             self.ram[addr as usize]
         }
@@ -83,6 +93,9 @@ impl<'a> WriteView for Mos6510Memory<'a> {
             self.color_ram[addr as usize - 0xD800] = value;
         } else if (addr >= 0xD400 && addr < 0xD800) || (addr >= 0xDC00 && addr < 0xE000) {
             self.io[addr as usize] = value;
+            if addr >= 0xDC00 && addr < 0xDD00 {
+                self.cia1.write(addr, value);
+            }
             if addr == 0xDD00 {
                 self.vic_bank_start = 16384 * (0b11 - (value as u16 & 0b11));
                 *self.char_rom_enabled = value & 1 > 0;
@@ -110,7 +123,7 @@ impl<'a> VicMemory<'a> {
 }
 
 impl<'a> ReadView for VicMemory<'a> {
-    fn read(self: &VicMemory<'a>, addr: u16) -> u8 {
+    fn read(self: &mut VicMemory<'a>, addr: u16) -> u8 {
         if self.char_rom_enabled && addr >= 0x1000 && addr < 0x2000 {
             self.char_rom[addr as usize - 0x1000]
         } else {
@@ -129,12 +142,13 @@ impl Machine {
             color_ram: [0; 1024],
             mos6510: Mos6510::new(),
             vic_bank_start: 0xC000,
-            vic: VicII::new()
+            vic: VicII::new(),
+            cia1: Cia1::new()
         }
     }
 
     fn reset(self: &mut Machine) {
-        self.mos6510.reset(&Mos6510Memory::new(&mut self.ram, &mut self.io, &mut self.vic.registers, self.vic_bank_start, &mut self.char_rom_enabled, &mut self.color_ram));
+        self.mos6510.reset(&mut Mos6510Memory::new(&mut self.ram, &mut self.io, &mut self.vic.registers, self.vic_bank_start, &mut self.char_rom_enabled, &mut self.color_ram, &mut self.cia1));
     }
 
     fn load_file(self: &mut Machine, filename: &str, memory_region: MemoryRegion, offset: usize) {
@@ -148,8 +162,12 @@ impl Machine {
     }
 
     fn tick(self: &mut Machine) -> Result<(Option<String>, Option<Effect>), String> {
-        self.vic.tick(&VicMemory::new(&self.ram, &self.char_rom, self.char_rom_enabled), &self.color_ram);
-        self.mos6510.tick(&mut Mos6510Memory::new(&mut self.ram, &mut self.io, &mut self.vic.registers, self.vic_bank_start, &mut self.char_rom_enabled, &mut self.color_ram))
+        let cia1_irq = match self.cia1.tick() {
+            Some(cia1::Effect::IRQ) => true,
+            None => false
+        };
+        self.vic.tick(&mut VicMemory::new(&self.ram, &self.char_rom, self.char_rom_enabled), &self.color_ram);
+        self.mos6510.tick(&mut Mos6510Memory::new(&mut self.ram, &mut self.io, &mut self.vic.registers, self.vic_bank_start, &mut self.char_rom_enabled, &mut self.color_ram, &mut self.cia1), cia1_irq)
     }
 }
 
@@ -340,7 +358,7 @@ fn main() {
                 debugger.state = DebuggerState::Pause;
             }
             DebuggerCommand::Inspect { addr } => {
-                let mem = Mos6510Memory::new(&mut machine.ram, &mut machine.io, &mut machine.vic.registers, machine.vic_bank_start, &mut machine.char_rom_enabled, &mut machine.color_ram);
+                let mut mem = Mos6510Memory::new(&mut machine.ram, &mut machine.io, &mut machine.vic.registers, machine.vic_bank_start, &mut machine.char_rom_enabled, &mut machine.color_ram, &mut machine.cia1);
                 println!("Memory at 0x{:04X}: 0x{:02X}", addr, mem.read(addr));
                 debugger.state = DebuggerState::Pause;
             }

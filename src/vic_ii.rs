@@ -113,7 +113,7 @@ impl VicII {
         415
     }
 
-    pub fn tick<M: ReadView>(self: &mut VicII, mem: &M, color_ram: &[u8]) {
+    pub fn tick<M: ReadView>(self: &mut VicII, mem: &mut M, color_ram: &[u8]) {
         if self.raster_line >= self.first_line() && self.raster_line <= self.last_line() &&
             self.x_coord >= self.first_x_coord() && self.x_coord <= self.last_x_coord() {
 

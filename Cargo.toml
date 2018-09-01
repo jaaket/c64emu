@@ -8,6 +8,7 @@ lazy_static = "1"
 regex = "1"
 rustyline = "1"
 sdl2 = "0.31"
+bitflags = "1"
 
 [dependencies.gl]
 git = "https://github.com/bjz/gl-rs"
